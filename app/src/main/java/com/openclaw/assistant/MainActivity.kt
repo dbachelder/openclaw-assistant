@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val allGranted = permissions.values.all { it }
         if (!allGranted) {
-            Toast.makeText(this, "権限が必要です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Permissions required", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -90,14 +90,12 @@ class MainActivity : ComponentActivity() {
 
     private fun openAssistantSettings() {
         try {
-            // アシスタントアプリ選択画面を開く
             startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
         } catch (e: Exception) {
-            // フォールバック
             try {
                 startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
             } catch (e2: Exception) {
-                Toast.makeText(this, "設定画面を開けませんでした", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Could not open settings", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -106,15 +104,15 @@ class MainActivity : ComponentActivity() {
         settings.hotwordEnabled = enabled
         if (enabled) {
             if (settings.picovoiceAccessKey.isBlank()) {
-                Toast.makeText(this, "Picovoice Access Keyを設定してください", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Please configure Picovoice Access Key", Toast.LENGTH_SHORT).show()
                 settings.hotwordEnabled = false
                 return
             }
             HotwordService.start(this)
-            Toast.makeText(this, "ホットワード検知を開始しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Hotword detection started", Toast.LENGTH_SHORT).show()
         } else {
             HotwordService.stop(this)
-            Toast.makeText(this, "ホットワード検知を停止しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Hotword detection stopped", Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -136,7 +134,7 @@ fun MainScreen(
                 title = { Text("OpenClaw Assistant") },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "設定")
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
             )
@@ -150,14 +148,14 @@ fun MainScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ステータスカード
+            // Status card
             StatusCard(isConfigured = isConfigured)
             
             Spacer(modifier = Modifier.height(24.dp))
 
-            // クイックアクション
+            // Quick actions
             Text(
-                text = "起動方法",
+                text = "Activation Methods",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth()
@@ -165,22 +163,22 @@ fun MainScreen(
             
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ホームボタン長押し
+            // Home button long press
             ActionCard(
                 icon = Icons.Default.Home,
-                title = "ホームボタン長押し",
-                description = "システムアシスタントとして設定が必要です",
-                actionText = "設定を開く",
+                title = "Long Press Home Button",
+                description = "Requires setting as system assistant",
+                actionText = "Open Settings",
                 onClick = onOpenAssistantSettings
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ホットワード
+            // Hotword
             ActionCard(
                 icon = Icons.Default.Mic,
-                title = "ウェイクワード「OpenClaw」",
-                description = if (hotwordEnabled) "「OpenClaw」と呼んでください" else "タップで有効化",
+                title = "Wake Word \"OpenClaw\"",
+                description = if (hotwordEnabled) "Say \"Open Claw\" to activate" else "Tap to enable",
                 showSwitch = true,
                 switchValue = hotwordEnabled,
                 onSwitchChange = { enabled ->
@@ -191,9 +189,9 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 使い方
+            // How to use
             Text(
-                text = "使い方",
+                text = "How to Use",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth()
@@ -205,10 +203,10 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 設定未完了の警告
+            // Configuration warning
             if (!isConfigured) {
                 WarningCard(
-                    message = "Webhook URLを設定してください",
+                    message = "Please configure Webhook URL",
                     onClick = onOpenSettings
                 )
             }
@@ -249,13 +247,13 @@ fun StatusCard(isConfigured: Boolean) {
             
             Column {
                 Text(
-                    text = if (isConfigured) "準備完了" else "設定が必要",
+                    text = if (isConfigured) "Ready" else "Setup Required",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Text(
-                    text = if (isConfigured) "OpenClawと連携可能です" else "Webhook URLを設定してください",
+                    text = if (isConfigured) "Connected to OpenClaw" else "Please configure Webhook URL",
                     fontSize = 14.sp,
                     color = Color.White.copy(alpha = 0.9f)
                 )
@@ -333,10 +331,10 @@ fun UsageCard() {
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            UsageStep(number = "1", text = "ホームボタン長押し または ウェイクワード")
-            UsageStep(number = "2", text = "質問や依頼を話す")
-            UsageStep(number = "3", text = "OpenClawが応答を読み上げ")
-            UsageStep(number = "4", text = "連続会話可能（セッション維持）")
+            UsageStep(number = "1", text = "Long press Home or say Wake Word")
+            UsageStep(number = "2", text = "Ask your question or request")
+            UsageStep(number = "3", text = "OpenClaw reads the response aloud")
+            UsageStep(number = "4", text = "Continue conversation (session maintained)")
         }
     }
 }

@@ -71,8 +71,8 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
         // 設定チェック
         if (!settings.isConfigured()) {
             currentState.value = AssistantState.ERROR
-            errorMessage.value = "Webhook URLを設定してください"
-            displayText.value = "設定が必要です"
+            errorMessage.value = "Please configure Webhook URL"
+            displayText.value = "Configuration required"
             return
         }
 
@@ -98,7 +98,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
 
     private fun startListening() {
         currentState.value = AssistantState.LISTENING
-        displayText.value = "聴いています..."
+        displayText.value = "Listening..."
         partialText.value = ""
         errorMessage.value = null
 
@@ -119,7 +119,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
                     }
                     is SpeechResult.Processing -> {
                         currentState.value = AssistantState.PROCESSING
-                        displayText.value = "処理中..."
+                        displayText.value = "Processing..."
                     }
                     is SpeechResult.Result -> {
                         Log.d(TAG, "Speech result: ${result.text}")
@@ -138,7 +138,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
 
     private fun sendToOpenClaw(message: String) {
         currentState.value = AssistantState.THINKING
-        displayText.value = "考え中..."
+        displayText.value = "Thinking..."
 
         scope.launch {
             val result = apiClient.sendMessage(
@@ -160,13 +160,13 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
                         errorMessage.value = response.error
                     } else {
                         currentState.value = AssistantState.ERROR
-                        errorMessage.value = "応答がありません"
+                        errorMessage.value = "No response"
                     }
                 },
                 onFailure = { error ->
                     Log.e(TAG, "API error", error)
                     currentState.value = AssistantState.ERROR
-                    errorMessage.value = error.message ?: "通信エラー"
+                    errorMessage.value = error.message ?: "Network error"
                 }
             )
         }
@@ -183,7 +183,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
                 startListening()
             } else {
                 currentState.value = AssistantState.ERROR
-                errorMessage.value = "読み上げエラー"
+                errorMessage.value = "Speech error"
             }
         }
     }
@@ -240,7 +240,7 @@ fun AssistantUI(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 閉じるボタン
+            // Closeボタン
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
@@ -248,7 +248,7 @@ fun AssistantUI(
                 IconButton(onClick = onClose) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "閉じる",
+                        contentDescription = "Close",
                         tint = Color.Gray
                     )
                 }
@@ -285,12 +285,12 @@ fun AssistantUI(
             // 状態テキスト
             Text(
                 text = when (state) {
-                    AssistantState.LISTENING -> "聴いています..."
-                    AssistantState.PROCESSING -> "処理中..."
-                    AssistantState.THINKING -> "考え中..."
-                    AssistantState.SPEAKING -> "話しています..."
-                    AssistantState.ERROR -> "エラー"
-                    else -> "準備完了"
+                    AssistantState.LISTENING -> "Listening..."
+                    AssistantState.PROCESSING -> "Processing..."
+                    AssistantState.THINKING -> "Thinking..."
+                    AssistantState.SPEAKING -> "Speaking..."
+                    AssistantState.ERROR -> "Error"
+                    else -> "Ready"
                 },
                 fontSize = 14.sp,
                 color = Color.Gray
@@ -319,7 +319,7 @@ fun AssistantUI(
                 )
             }
 
-            // エラーメッセージ
+            // Errorメッセージ
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -330,7 +330,7 @@ fun AssistantUI(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(onClick = onRetry) {
-                    Text("もう一度")
+                    Text("Try again")
                 }
             }
 

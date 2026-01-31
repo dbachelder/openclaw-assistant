@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,7 +36,7 @@ class SettingsActivity : ComponentActivity() {
                 SettingsScreen(
                     settings = settings,
                     onSave = { 
-                        Toast.makeText(this, "保存しました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
                         finish()
                     },
                     onBack = { finish() }
@@ -65,16 +66,15 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("設定") },
+                title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     TextButton(
                         onClick = {
-                            // 保存
                             settings.webhookUrl = webhookUrl
                             settings.authToken = authToken
                             settings.sessionId = sessionId
@@ -85,7 +85,7 @@ fun SettingsScreen(
                         },
                         enabled = webhookUrl.isNotBlank()
                     ) {
-                        Text("保存")
+                        Text("Save")
                     }
                 }
             )
@@ -98,16 +98,16 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            // OpenClaw設定
+            // OpenClaw Connection
             Text(
-                text = "OpenClaw接続設定",
+                text = "OpenClaw Connection",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
             
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Webhook URL（必須）
+            // Webhook URL (required)
             OutlinedTextField(
                 value = webhookUrl,
                 onValueChange = { webhookUrl = it },
@@ -120,25 +120,25 @@ fun SettingsScreen(
                 isError = webhookUrl.isBlank(),
                 supportingText = {
                     if (webhookUrl.isBlank()) {
-                        Text("必須項目です", color = MaterialTheme.colorScheme.error)
+                        Text("Required field", color = MaterialTheme.colorScheme.error)
                     }
                 }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 認証トークン（オプション）
+            // Auth Token (optional)
             OutlinedTextField(
                 value = authToken,
                 onValueChange = { authToken = it },
-                label = { Text("認証トークン (Bearer)") },
-                placeholder = { Text("オプション") },
+                label = { Text("Auth Token (Bearer)") },
+                placeholder = { Text("Optional") },
                 leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
                 trailingIcon = {
                     IconButton(onClick = { showAuthToken = !showAuthToken }) {
                         Icon(
                             if (showAuthToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = "表示切替"
+                            contentDescription = "Toggle visibility"
                         )
                     }
                 },
@@ -149,39 +149,39 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // セッション設定
+            // Session Settings
             Text(
-                text = "セッション設定",
+                text = "Session Settings",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
             
             Spacer(modifier = Modifier.height(12.dp))
 
-            // セッションID
+            // Session ID
             OutlinedTextField(
                 value = sessionId,
                 onValueChange = { sessionId = it },
-                label = { Text("セッションID") },
+                label = { Text("Session ID") },
                 leadingIcon = { Icon(Icons.Default.Fingerprint, contentDescription = null) },
                 trailingIcon = {
                     IconButton(onClick = { sessionId = settings.generateNewSessionId() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "新規生成")
+                        Icon(Icons.Default.Refresh, contentDescription = "Generate new")
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                supportingText = { Text("連続会話を維持するためのID") }
+                supportingText = { Text("Used to maintain conversation context") }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ユーザーID
+            // User ID
             OutlinedTextField(
                 value = userId,
                 onValueChange = { userId = it },
-                label = { Text("ユーザーID") },
-                placeholder = { Text("オプション") },
+                label = { Text("User ID") },
+                placeholder = { Text("Optional") },
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
@@ -189,9 +189,9 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Picovoice設定
+            // Hotword Settings
             Text(
-                text = "ホットワード設定 (Picovoice)",
+                text = "Hotword Settings (Picovoice)",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -203,33 +203,33 @@ fun SettingsScreen(
                 value = picovoiceKey,
                 onValueChange = { picovoiceKey = it },
                 label = { Text("Picovoice Access Key") },
-                placeholder = { Text("console.picovoice.ai で取得") },
+                placeholder = { Text("Get from console.picovoice.ai") },
                 leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
                 trailingIcon = {
                     IconButton(onClick = { showPicovoiceKey = !showPicovoiceKey }) {
                         Icon(
                             if (showPicovoiceKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = "表示切替"
+                            contentDescription = "Toggle visibility"
                         )
                     }
                 },
                 visualTransformation = if (showPicovoiceKey) VisualTransformation.None else PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                supportingText = { Text("ホットワード検知に必要（無料枠あり）") }
+                supportingText = { Text("Required for hotword detection (free tier available)") }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 起動時に開始
+            // Start on boot
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "起動時にホットワード検知を開始")
+                    Text(text = "Start hotword detection on boot")
                     Text(
-                        text = "デバイス起動時に自動で常時聴取を開始",
+                        text = "Automatically start listening when device boots",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -242,7 +242,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ヒント
+            // Tips
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -258,17 +258,17 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "設定のヒント",
+                            text = "Tips",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "• Webhook URLはOpenClawのエンドポイントを設定\n" +
-                               "• セッションIDは会話を維持するために使用\n" +
-                               "• Picovoice Access Keyはconsole.picovoice.aiで無料取得可能\n" +
-                               "• デフォルトのウェイクワードは「Porcupine」",
+                        text = "• Webhook URL is your OpenClaw endpoint\n" +
+                               "• Session ID maintains conversation context\n" +
+                               "• Picovoice Access Key is free at console.picovoice.ai\n" +
+                               "• Wake word is \"Open Claw\"",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                         lineHeight = 18.sp

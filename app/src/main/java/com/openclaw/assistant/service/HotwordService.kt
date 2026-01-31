@@ -119,7 +119,7 @@ class HotwordService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText("「OpenClaw」と呼んでください")
+            .setContentText("Say \"Open Claw\" to activate")
             .setSmallIcon(R.drawable.ic_mic)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -242,8 +242,8 @@ class HotwordService : Service() {
     private fun playConfirmationBeep() {
         // 短いビープ音で応答（TTSで代用）
         scope.launch {
-            // 「はい」と短く応答
-            ttsManager.speak("はい")
+            // 「Yes」と短く応答
+            ttsManager.speak("Yes")
         }
     }
 
@@ -278,7 +278,7 @@ class HotwordService : Service() {
         if (!settings.isConfigured()) {
             Log.e(TAG, "Webhook not configured")
             scope.launch {
-                ttsManager.speak("設定が必要です")
+                ttsManager.speak("Configuration required")
                 resumeHotwordDetection()
             }
             return
@@ -303,7 +303,7 @@ class HotwordService : Service() {
                 },
                 onFailure = { error ->
                     Log.e(TAG, "API error", error)
-                    ttsManager.speak("エラーが発生しました")
+                    ttsManager.speak("An error occurred")
                     resumeHotwordDetection()
                 }
             )
