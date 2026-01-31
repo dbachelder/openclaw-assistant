@@ -15,13 +15,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
+import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
 
@@ -57,6 +60,11 @@ fun SettingsScreen(
     var authToken by remember { mutableStateOf(settings.authToken) }
     
     var showAuthToken by remember { mutableStateOf(false) }
+    var isTesting by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<TestResult?>(null) }
+    
+    val scope = rememberCoroutineScope()
+    val apiClient = remember { OpenClawClient() }
 
     Scaffold(
         topBar = {
@@ -92,7 +100,10 @@ fun SettingsScreen(
             // Webhook URL (required)
             OutlinedTextField(
                 value = webhookUrl,
-                onValueChange = { webhookUrl = it },
+                onValueChange = { 
+                    webhookUrl = it
+                    testResult = null
+                },
                 label = { Text("Webhook URL *") },
                 placeholder = { Text("https://your-server/hooks/voice") },
                 leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
@@ -112,7 +123,10 @@ fun SettingsScreen(
             // Auth Token (optional)
             OutlinedTextField(
                 value = authToken,
-                onValueChange = { authToken = it },
+                onValueChange = { 
+                    authToken = it
+                    testResult = null
+                },
                 label = { Text("Auth Token") },
                 placeholder = { Text("Optional") },
                 leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
@@ -129,7 +143,84 @@ fun SettingsScreen(
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Test Connection Button
+            Button(
+                onClick = {
+                    if (webhookUrl.isBlank()) return@Button
+                    isTesting = true
+                    testResult = null
+                    scope.launch {
+                        val result = apiClient.sendMessage(
+                            webhookUrl = webhookUrl,
+                            message = "ping",
+                            sessionId = "test-${System.currentTimeMillis()}",
+                            authToken = authToken.takeIf { it.isNotBlank() }
+                        )
+                        testResult = result.fold(
+                            onSuccess = { response ->
+                                val text = response.getResponseText()
+                                if (text != null) {
+                                    TestResult(success = true, message = "Connected! Response: $text")
+                                } else {
+                                    TestResult(success = false, message = "No response text")
+                                }
+                            },
+                            onFailure = { error ->
+                                TestResult(success = false, message = error.message ?: "Connection failed")
+                            }
+                        )
+                        isTesting = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = webhookUrl.isNotBlank() && !isTesting
+            ) {
+                if (isTesting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Testing...")
+                } else {
+                    Icon(Icons.Default.NetworkCheck, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Test Connection")
+                }
+            }
+
+            // Test Result
+            testResult?.let { result ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (result.success) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (result.success) Icons.Default.CheckCircle else Icons.Default.Error,
+                            contentDescription = null,
+                            tint = if (result.success) Color(0xFF4CAF50) else Color(0xFFF44336)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = result.message,
+                            fontSize = 14.sp,
+                            color = if (result.success) Color(0xFF2E7D32) else Color(0xFFC62828)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Tips
             Card(
@@ -156,7 +247,7 @@ fun SettingsScreen(
                     Text(
                         text = "• Enter your OpenClaw webhook URL\n" +
                                "• Auth Token is optional (depends on server config)\n" +
-                               "• Wake word is \"Open Claw\"",
+                               "• Use Test Connection to verify settings",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                         lineHeight = 18.sp
@@ -166,3 +257,8 @@ fun SettingsScreen(
         }
     }
 }
+
+data class TestResult(
+    val success: Boolean,
+    val message: String
+)

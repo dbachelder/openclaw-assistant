@@ -3,7 +3,6 @@ package com.openclaw.assistant
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -15,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -24,15 +22,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.service.HotwordService
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
@@ -103,8 +102,8 @@ class MainActivity : ComponentActivity() {
     private fun toggleHotwordService(enabled: Boolean) {
         settings.hotwordEnabled = enabled
         if (enabled) {
-            if (settings.picovoiceAccessKey.isBlank()) {
-                Toast.makeText(this, "Please configure Picovoice Access Key", Toast.LENGTH_SHORT).show()
+            if (!settings.isConfigured()) {
+                Toast.makeText(this, "Please configure Webhook URL first", Toast.LENGTH_SHORT).show()
                 settings.hotwordEnabled = false
                 return
             }
@@ -125,8 +124,23 @@ fun MainScreen(
     onOpenAssistantSettings: () -> Unit,
     onToggleHotword: (Boolean) -> Unit
 ) {
+    // Re-check configuration when returning from settings
+    var isConfigured by remember { mutableStateOf(settings.isConfigured()) }
     var hotwordEnabled by remember { mutableStateOf(settings.hotwordEnabled) }
-    val isConfigured = settings.isConfigured()
+    
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isConfigured = settings.isConfigured()
+                hotwordEnabled = settings.hotwordEnabled
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -182,6 +196,10 @@ fun MainScreen(
                 showSwitch = true,
                 switchValue = hotwordEnabled,
                 onSwitchChange = { enabled ->
+                    if (enabled && !isConfigured) {
+                        // Don't enable if not configured
+                        return@ActionCard
+                    }
                     hotwordEnabled = enabled
                     onToggleHotword(enabled)
                 }
