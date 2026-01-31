@@ -2,7 +2,6 @@ package com.openclaw.assistant.api
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +12,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Simple webhook client - just POSTs to the configured URL
+ * Simple webhook client - POSTs to the configured URL
  */
 class OpenClawClient {
 
@@ -36,20 +35,17 @@ class OpenClawClient {
         authToken: String? = null
     ): Result<OpenClawResponse> = withContext(Dispatchers.IO) {
         try {
-            // Simple request body
+            // Simple request body for /hooks/voice
             val requestBody = JsonObject().apply {
                 addProperty("message", message)
                 addProperty("session_id", sessionId)
-                if (!userId.isNullOrBlank()) {
-                    addProperty("user_id", userId)
-                }
             }
 
             val jsonBody = gson.toJson(requestBody)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
             val requestBuilder = Request.Builder()
-                .url(webhookUrl)  // Use URL as-is, no modifications
+                .url(webhookUrl)  // Use URL as-is
                 .post(jsonBody)
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "application/json")
@@ -74,7 +70,7 @@ class OpenClawClient {
                     )
                 }
 
-                // Try to extract response text from various JSON formats
+                // Extract response text from JSON
                 val text = extractResponseText(responseBody)
                 Result.success(OpenClawResponse(response = text ?: responseBody))
             }
@@ -90,14 +86,15 @@ class OpenClawClient {
         return try {
             val obj = gson.fromJson(json, JsonObject::class.java)
             
+            // OpenClaw /hooks/voice format: { ok, response, session_id }
+            obj.get("response")?.asString
             // OpenAI format: choices[0].message.content
-            obj.getAsJsonArray("choices")?.let { choices ->
+            ?: obj.getAsJsonArray("choices")?.let { choices ->
                 choices.firstOrNull()?.asJsonObject
                     ?.getAsJsonObject("message")
                     ?.get("content")?.asString
             }
-            // Simple format: response, text, or message field
-            ?: obj.get("response")?.asString
+            // Other simple formats
             ?: obj.get("text")?.asString
             ?: obj.get("message")?.asString
             ?: obj.get("content")?.asString
