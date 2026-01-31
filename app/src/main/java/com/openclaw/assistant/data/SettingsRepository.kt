@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.openclaw.assistant.BuildConfig
 import java.util.UUID
 
 /**
@@ -48,7 +49,9 @@ class SettingsRepository(context: Context) {
 
     // Picovoice Access Key
     var picovoiceAccessKey: String
-        get() = prefs.getString(KEY_PICOVOICE_KEY, "") ?: ""
+        get() = prefs.getString(KEY_PICOVOICE_KEY, null) 
+            ?: BuildConfig.PICOVOICE_ACCESS_KEY.takeIf { it.isNotBlank() } 
+            ?: ""
         set(value) = prefs.edit().putString(KEY_PICOVOICE_KEY, value).apply()
 
     // ホットワード検知有効化
