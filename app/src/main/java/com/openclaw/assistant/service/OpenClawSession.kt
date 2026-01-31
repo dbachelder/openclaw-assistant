@@ -142,7 +142,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context) {
 
         scope.launch {
             val result = apiClient.sendMessage(
-                webhookUrl = settings.webhookUrl,
+                baseUrl = settings.webhookUrl,
                 message = message,
                 sessionId = settings.sessionId,
                 userId = settings.userId.takeIf { it.isNotBlank() },

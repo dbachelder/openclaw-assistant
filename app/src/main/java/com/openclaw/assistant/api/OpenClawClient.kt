@@ -12,45 +12,58 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * OpenClaw Webhook APIクライアント
+ * OpenClaw API Client (OpenAI-compatible Chat Completions)
  */
 class OpenClawClient {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)  // OpenClawの応答は時間がかかる場合がある
+        .readTimeout(120, TimeUnit.SECONDS)  // OpenClaw responses may take time
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
 
     /**
-     * ユーザーのメッセージをOpenClawに送信し、応答を取得
+     * Send user message to OpenClaw and get response
      */
     suspend fun sendMessage(
-        webhookUrl: String,
+        baseUrl: String,
         message: String,
         sessionId: String,
         userId: String? = null,
-        authToken: String? = null
+        authToken: String? = null,
+        agentId: String = "main"
     ): Result<OpenClawResponse> = withContext(Dispatchers.IO) {
         try {
-            val requestBody = OpenClawRequest(
-                message = message,
-                sessionId = sessionId,
-                userId = userId
+            // Build OpenAI-compatible request
+            val messages = listOf(
+                ChatMessage(role = "user", content = message)
+            )
+            
+            val requestBody = ChatCompletionRequest(
+                model = "openclaw:$agentId",
+                messages = messages,
+                user = sessionId  // Use session ID as user for session persistence
             )
 
             val jsonBody = gson.toJson(requestBody)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
+            // Append /v1/chat/completions if not already present
+            val apiUrl = if (baseUrl.endsWith("/v1/chat/completions")) {
+                baseUrl
+            } else {
+                baseUrl.trimEnd('/') + "/v1/chat/completions"
+            }
+
             val requestBuilder = Request.Builder()
-                .url(webhookUrl)
+                .url(apiUrl)
                 .post(jsonBody)
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "application/json")
 
-            // 認証トークンがあれば追加
+            // Add auth token if provided
             if (!authToken.isNullOrBlank()) {
                 requestBuilder.addHeader("Authorization", "Bearer $authToken")
             }
@@ -72,10 +85,11 @@ class OpenClawClient {
                 }
 
                 try {
-                    val openClawResponse = gson.fromJson(responseBody, OpenClawResponse::class.java)
-                    Result.success(openClawResponse)
+                    val chatResponse = gson.fromJson(responseBody, ChatCompletionResponse::class.java)
+                    val assistantMessage = chatResponse.choices?.firstOrNull()?.message?.content
+                    Result.success(OpenClawResponse(response = assistantMessage))
                 } catch (e: Exception) {
-                    // JSONパース失敗時は生のレスポンスをそのまま使用
+                    // Fallback: try to use raw response
                     Result.success(OpenClawResponse(response = responseBody))
                 }
             }
@@ -86,39 +100,74 @@ class OpenClawClient {
 }
 
 /**
- * OpenClawへのリクエスト形式
+ * OpenAI Chat Completion Request
  */
-data class OpenClawRequest(
-    @SerializedName("message")
-    val message: String,
+data class ChatCompletionRequest(
+    @SerializedName("model")
+    val model: String,
 
-    @SerializedName("session_id")
-    val sessionId: String,
+    @SerializedName("messages")
+    val messages: List<ChatMessage>,
 
-    @SerializedName("user_id")
-    val userId: String? = null
+    @SerializedName("user")
+    val user: String? = null
 )
 
 /**
- * OpenClawからのレスポンス形式
+ * Chat Message
  */
-data class OpenClawResponse(
-    @SerializedName("response")
-    val response: String? = null,
+data class ChatMessage(
+    @SerializedName("role")
+    val role: String,
 
-    @SerializedName("text")
-    val text: String? = null,  // 別形式のレスポンスにも対応
+    @SerializedName("content")
+    val content: String
+)
 
-    @SerializedName("message")
-    val message: String? = null,  // 別形式のレスポンスにも対応
+/**
+ * OpenAI Chat Completion Response
+ */
+data class ChatCompletionResponse(
+    @SerializedName("id")
+    val id: String? = null,
+
+    @SerializedName("choices")
+    val choices: List<Choice>? = null,
 
     @SerializedName("error")
+    val error: ErrorInfo? = null
+)
+
+data class Choice(
+    @SerializedName("index")
+    val index: Int = 0,
+
+    @SerializedName("message")
+    val message: ChatMessage? = null,
+
+    @SerializedName("finish_reason")
+    val finishReason: String? = null
+)
+
+data class ErrorInfo(
+    @SerializedName("message")
+    val message: String? = null,
+
+    @SerializedName("type")
+    val type: String? = null
+)
+
+/**
+ * OpenClaw Response (simplified for app use)
+ */
+data class OpenClawResponse(
+    val response: String? = null,
     val error: String? = null
 ) {
     /**
-     * 応答テキストを取得（複数のフィールド形式に対応）
+     * Get response text
      */
     fun getResponseText(): String? {
-        return response ?: text ?: message
+        return response
     }
 }
