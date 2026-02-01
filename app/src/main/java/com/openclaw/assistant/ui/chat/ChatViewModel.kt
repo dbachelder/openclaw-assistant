@@ -109,6 +109,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         Log.e(TAG, "startListening() called, isListening=${_uiState.value.isListening}")
         if (_uiState.value.isListening) return
 
+        // Pause Hotword Service to prevent microphone conflict
+        sendPauseBroadcast()
+
         lastInputWasVoice = true // Mark as voice input
         listeningJob?.cancel()
 
@@ -122,43 +125,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Wait for TTS resource release before starting mic
             delay(500)
 
-            while (isActive && !hasActuallySpoken) {
-                Log.e(TAG, "Starting speechManager.startListening(), isListening=true")
-                _uiState.update { it.copy(isListening = true, partialText = "") }
+            try {
+                while (isActive && !hasActuallySpoken) {
+                    Log.e(TAG, "Starting speechManager.startListening(), isListening=true")
+                    _uiState.update { it.copy(isListening = true, partialText = "") }
 
-                speechManager.startListening("ja-JP").collect { result ->
-                    Log.e(TAG, "SpeechResult: $result")
-                    when (result) {
-                        is SpeechResult.PartialResult -> {
-                            _uiState.update { it.copy(partialText = result.text) }
-                        }
-                        is SpeechResult.Result -> {
-                            hasActuallySpoken = true
-                            _uiState.update { it.copy(isListening = false, partialText = "") }
-                            sendMessage(result.text)
-                        }
-                        is SpeechResult.Error -> {
-                            val elapsed = System.currentTimeMillis() - startTime
-                            val isTimeout = result.code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || 
-                                          result.code == SpeechRecognizer.ERROR_NO_MATCH
-                            
-                            if (isTimeout && settings.continuousMode && elapsed < 5000) {
-                                Log.d(TAG, "Speech timeout within 5s window ($elapsed ms), retrying loop...")
-                                // Just fall through to next while iteration
-                                _uiState.update { it.copy(isListening = false) }
-                            } else {
-                                // Permanent error or out of time
-                                _uiState.update { it.copy(isListening = false, error = result.message) }
-                                lastInputWasVoice = false
-                                hasActuallySpoken = true // Break the while loop
+                    speechManager.startListening("ja-JP").collect { result ->
+                        Log.e(TAG, "SpeechResult: $result")
+                        when (result) {
+                            is SpeechResult.PartialResult -> {
+                                _uiState.update { it.copy(partialText = result.text) }
                             }
+                            is SpeechResult.Result -> {
+                                hasActuallySpoken = true
+                                _uiState.update { it.copy(isListening = false, partialText = "") }
+                                sendMessage(result.text)
+                            }
+                            is SpeechResult.Error -> {
+                                val elapsed = System.currentTimeMillis() - startTime
+                                val isTimeout = result.code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || 
+                                              result.code == SpeechRecognizer.ERROR_NO_MATCH
+                                
+                                if (isTimeout && settings.continuousMode && elapsed < 5000) {
+                                    Log.d(TAG, "Speech timeout within 5s window ($elapsed ms), retrying loop...")
+                                    // Just fall through to next while iteration
+                                    _uiState.update { it.copy(isListening = false) }
+                                } else {
+                                    // Permanent error or out of time
+                                    _uiState.update { it.copy(isListening = false, error = result.message) }
+                                    lastInputWasVoice = false
+                                    hasActuallySpoken = true // Break the while loop
+                                }
+                            }
+                            else -> {}
                         }
-                        else -> {}
+                    }
+                    
+                    if (!hasActuallySpoken) {
+                        delay(300) // Small gap between retries
                     }
                 }
+            } finally {
+                // If the loop finishes (e.g. error or spoken), and we are NOT continuing to speak/think immediately,
+                // we might want to resume hotword...
+                // HOWEVER: if we successfully spoke, we are now "Thinking" or "Speaking", so we shouldn't resume yet.
+                // We only resume if we are truly done (e.g. stopped listening without input).
                 
-                if (!hasActuallySpoken) {
-                    delay(300) // Small gap between retries
+                // But actually, sendMessage() triggers Thinking -> Speaking -> (maybe) startListening again.
+                // So we should only resume hotword if we are definitely NOT going to loop back.
+                
+                if (!lastInputWasVoice) {
+                    sendResumeBroadcast()
                 }
             }
         }
@@ -168,6 +185,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         lastInputWasVoice = false // User manually stopped
         listeningJob?.cancel()
         _uiState.update { it.copy(isListening = false) }
+        sendResumeBroadcast()
     }
 
     private fun speak(text: String) {
@@ -189,8 +207,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 speechManager.destroy()
                 kotlinx.coroutines.delay(1000) // Increased from 800ms for more reliable cleanup
 
-                // Restart listening
+                // Restart listening (which will pause hotword again if needed, though it should still be paused)
                 startListening()
+            } else {
+                // Conversation ended
+                sendResumeBroadcast()
             }
         }
     }
@@ -242,6 +263,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         lastInputWasVoice = false // Stop loop if manually stopped
         tts?.stop()
         _uiState.update { it.copy(isSpeaking = false) }
+        sendResumeBroadcast()
     }
 
     private fun addMessage(text: String, isUser: Boolean) {
@@ -254,6 +276,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         speechManager.destroy()
+        sendResumeBroadcast()
         // Don't shutdown TTS here - Activity owns it
+    }
+
+    private fun sendPauseBroadcast() {
+        val intent = android.content.Intent("com.openclaw.assistant.ACTION_PAUSE_HOTWORD")
+        intent.setPackage(getApplication<Application>().packageName)
+        getApplication<Application>().sendBroadcast(intent)
+    }
+    
+    private fun sendResumeBroadcast() {
+        val intent = android.content.Intent("com.openclaw.assistant.ACTION_RESUME_HOTWORD")
+        intent.setPackage(getApplication<Application>().packageName)
+        getApplication<Application>().sendBroadcast(intent)
     }
 }
