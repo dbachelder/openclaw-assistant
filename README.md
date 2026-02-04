@@ -1,9 +1,5 @@
 # OpenClaw Assistant
 
-<p align="center">
-  <img src="docs/screenshot.png" width="300" alt="OpenClaw Assistant Screenshot">
-</p>
-
 **[日本語版はこちら](#日本語) | English below**
 
 📹 **Demo Video**: https://x.com/i/status/2017914589938438532
