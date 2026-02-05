@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.BasicTextField
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.openclaw.assistant.speech.TTSUtils
 import com.openclaw.assistant.ui.chat.ChatMessage
 import com.openclaw.assistant.ui.chat.ChatUiState
 import com.openclaw.assistant.ui.chat.ChatViewModel
@@ -97,7 +98,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         Log.e(TAG, "TTS onInit callback, status=$status (SUCCESS=${TextToSpeech.SUCCESS})")
         if (status == TextToSpeech.SUCCESS) {
-            setupVoice()
+            TTSUtils.setupVoice(tts)
             
             // Pass TTS to ViewModel
             tts?.let { viewModel.setTTS(it) }
@@ -105,42 +106,6 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else {
             Log.e(TAG, "TTS initialization FAILED with status=$status")
         }
-    }
-
-    private fun setupVoice() {
-        val currentLocale = Locale.getDefault()
-        Log.e(TAG, "Current system locale: $currentLocale")
-
-        // Try to set language based on system locale
-        val result = tts?.setLanguage(currentLocale)
-        Log.e(TAG, "setLanguage result=$result")
-
-        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            // Fallback to English (US) if default fails
-            if (currentLocale.language != Locale.US.language) {
-                tts?.setLanguage(Locale.US)
-            }
-        }
-
-        // Try to select high quality voice
-        try {
-            val voices = tts?.voices
-            val bestVoice = voices?.filter { it.locale.language == tts?.language?.language }
-                ?.firstOrNull { !it.isNetworkConnectionRequired }
-                ?: voices?.firstOrNull { it.locale.language == tts?.language?.language }
-
-            if (bestVoice != null) {
-                tts?.voice = bestVoice
-                Log.e(TAG, "Selected voice: ${bestVoice.name} (${bestVoice.locale})")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error selecting voice: ${e.message}")
-        }
-
-        // Language specific adjustments
-        val rate = if (tts?.language?.language == "ja") 1.5f else 1.2f
-        tts?.setSpeechRate(rate)
-        tts?.setPitch(1.0f)
     }
 
     override fun onDestroy() {

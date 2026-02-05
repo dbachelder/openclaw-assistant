@@ -31,9 +31,7 @@ class SpeechRecognizerManager(private val context: Context) {
      */
     fun startListening(language: String? = null): Flow<SpeechResult> = callbackFlow {
         // デフォルト言語の決定
-        val targetLanguage = language ?: Locale.getDefault().toLanguageTag().let {
-            if (it.startsWith("ja")) "ja-JP" else if (it.startsWith("en")) "en-US" else it
-        }
+        val targetLanguage = language ?: Locale.getDefault().toLanguageTag()
         
         android.util.Log.e("SpeechRecognizerManager", "startListening called, language=$targetLanguage, isAvailable=${isAvailable()}")
 
