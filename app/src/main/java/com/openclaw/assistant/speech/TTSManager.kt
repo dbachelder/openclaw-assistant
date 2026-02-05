@@ -48,9 +48,9 @@ class TTSManager(context: Context) {
         Log.e(TAG, "setLanguage result=$result")
 
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            // Fallback to Japanese if default fails and it's not already Japanese
-            if (currentLocale != Locale.JAPANESE) {
-                tts?.setLanguage(Locale.JAPANESE)
+            // Fallback to English (US) if default fails
+            if (currentLocale.language != Locale.US.language) {
+                tts?.setLanguage(Locale.US)
             }
         }
 
