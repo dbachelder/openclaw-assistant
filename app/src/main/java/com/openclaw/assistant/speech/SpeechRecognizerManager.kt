@@ -36,15 +36,7 @@ class SpeechRecognizerManager(private val context: Context) {
         android.util.Log.e("SpeechRecognizerManager", "startListening called, language=$targetLanguage, isAvailable=${isAvailable()}")
 
         // Clean slate: Ensure any previous instance is safely destroyed
-        recognizer?.let { rec ->
-            try {
-                rec.cancel()
-                rec.destroy()
-            } catch (e: Exception) {
-                // Ignore
-            }
-            recognizer = null
-        }
+        destroyInternal()
 
         // Wait for Android to release internal resources (critical for 2nd+ invocations)
         kotlinx.coroutines.delay(300)
@@ -75,22 +67,20 @@ class SpeechRecognizerManager(private val context: Context) {
 
             override fun onError(error: Int) {
                 val errorMessage = when (error) {
-                    SpeechRecognizer.ERROR_AUDIO -> "オーディオエラー"
-                    SpeechRecognizer.ERROR_CLIENT -> "クライアントエラー"
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "権限が不足しています"
-                    SpeechRecognizer.ERROR_NETWORK -> "ネットワークエラー"
-                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ネットワークタイムアウト"
-                    SpeechRecognizer.ERROR_NO_MATCH -> "認識できませんでした"
-                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "認識サービスがビジー - 再試行します"
-                    SpeechRecognizer.ERROR_SERVER -> "サーバーエラー"
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "音声入力がありませんでした"
-                    else -> "不明なエラー ($error)"
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match found"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Server error"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
+                    else -> "Unknown error ($error)"
                 }
                 
+                android.util.Log.e("SpeechRecognizerManager", "onError: $errorMessage ($error)")
                 trySend(SpeechResult.Error(errorMessage, error))
-                
-                // If busy, we don't necessarily close immediately if we want to retry manually in session,
-                // but for now, let the session handle the error result.
                 close()
             }
 
@@ -105,7 +95,7 @@ class SpeechRecognizerManager(private val context: Context) {
                         alternatives = matches.drop(1)
                     ))
                 } else {
-                    trySend(SpeechResult.Error("認識結果がありません", SpeechRecognizer.ERROR_NO_MATCH))
+                    trySend(SpeechResult.Error("No results found", SpeechRecognizer.ERROR_NO_MATCH))
                 }
                 close()
             }
@@ -136,25 +126,28 @@ class SpeechRecognizerManager(private val context: Context) {
              try {
                  newRecognizer.startListening(intent)
              } catch (e: Exception) {
-                 trySend(SpeechResult.Error("開始エラー: ${e.message}"))
+                 trySend(SpeechResult.Error("Start error: ${e.message}"))
                  close()
              }
         })
 
         awaitClose {
+            destroyInternal()
+        }
+    }
+
+    private fun destroyInternal() {
+        recognizer?.let { rec ->
             kotlinx.coroutines.Dispatchers.Main.dispatch(kotlin.coroutines.EmptyCoroutineContext, Runnable {
                 try {
-                    // Cancel before destroy is safer
-                    newRecognizer.cancel()
-                    newRecognizer.destroy()
+                    rec.cancel()
+                    rec.destroy()
                 } catch (e: Exception) {
                     // Ignore
                 }
-                if (recognizer == newRecognizer) {
-                    recognizer = null
-                }
             })
         }
+        recognizer = null
     }
 
     /**
@@ -168,12 +161,7 @@ class SpeechRecognizerManager(private val context: Context) {
      * Completely destroy the recognizer resources
      */
     fun destroy() { 
-        try {
-            recognizer?.destroy()
-        } catch (e: Exception) {
-            // Ignore
-        }
-        recognizer = null
+        destroyInternal()
     }
 }
 

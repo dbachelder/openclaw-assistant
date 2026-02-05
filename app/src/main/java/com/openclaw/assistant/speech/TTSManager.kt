@@ -76,12 +76,14 @@ class TTSManager(context: Context) {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                Log.e(TAG, "TTS Error: $utteranceId")
                 if (continuation.isActive) {
                     continuation.resume(false)
                 }
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
+                Log.e(TAG, "TTS Error: $utteranceId, errorCode: $errorCode")
                 if (continuation.isActive) {
                     continuation.resume(false)
                 }
@@ -99,12 +101,14 @@ class TTSManager(context: Context) {
                 tts?.setOnUtteranceProgressListener(listener)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
             }
+            // Increase timeout to 5 seconds for slower engines on Chinese ROMs
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 if (continuation.isActive && !isInitialized) {
+                    Log.e(TAG, "TTS initialization timeout (5s)")
                     pendingSpeak = null
                     continuation.resume(false)
                 }
-            }, 3000)
+            }, 5000)
         }
 
         continuation.invokeOnCancellation {
@@ -130,12 +134,12 @@ class TTSManager(context: Context) {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                trySend(TTSState.Error("読み上げエラー"))
+                trySend(TTSState.Error("TTS error occurred"))
                 close()
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                trySend(TTSState.Error("読み上げエラー: $errorCode"))
+                trySend(TTSState.Error("TTS error: $errorCode"))
                 close()
             }
         }
