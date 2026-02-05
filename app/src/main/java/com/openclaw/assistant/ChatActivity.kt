@@ -58,6 +58,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         // Initialize TTS with Activity context (important for MIUI!)
         Log.e(TAG, "Initializing TTS with Activity context...")
+        // Using system default engine (no explicit package name) for better compatibility
         tts = TextToSpeech(this, this)
 
         // Request Microphone permission if not granted
@@ -96,13 +97,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         Log.e(TAG, "TTS onInit callback, status=$status (SUCCESS=${TextToSpeech.SUCCESS})")
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.JAPANESE)
-            Log.e(TAG, "TTS setLanguage result=$result")
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                tts?.setLanguage(Locale.getDefault())
-            }
-            tts?.setSpeechRate(1.5f)
-            tts?.setPitch(1.0f)
+            setupVoice()
             
             // Pass TTS to ViewModel
             tts?.let { viewModel.setTTS(it) }
@@ -110,6 +105,42 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else {
             Log.e(TAG, "TTS initialization FAILED with status=$status")
         }
+    }
+
+    private fun setupVoice() {
+        val currentLocale = Locale.getDefault()
+        Log.e(TAG, "Current system locale: $currentLocale")
+
+        // Try to set language based on system locale
+        val result = tts?.setLanguage(currentLocale)
+        Log.e(TAG, "setLanguage result=$result")
+
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            // Fallback to Japanese if default fails
+            if (currentLocale != Locale.JAPANESE) {
+                tts?.setLanguage(Locale.JAPANESE)
+            }
+        }
+
+        // Try to select high quality voice
+        try {
+            val voices = tts?.voices
+            val bestVoice = voices?.filter { it.locale.language == tts?.language?.language }
+                ?.firstOrNull { !it.isNetworkConnectionRequired }
+                ?: voices?.firstOrNull { it.locale.language == tts?.language?.language }
+
+            if (bestVoice != null) {
+                tts?.voice = bestVoice
+                Log.e(TAG, "Selected voice: ${bestVoice.name} (${bestVoice.locale})")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error selecting voice: ${e.message}")
+        }
+
+        // Language specific adjustments
+        val rate = if (tts?.language?.language == "ja") 1.5f else 1.2f
+        tts?.setSpeechRate(rate)
+        tts?.setPitch(1.0f)
     }
 
     override fun onDestroy() {
