@@ -1,29 +1,55 @@
 package com.openclaw.assistant.speech.embedded
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.util.Log
-import com.k2fsa.sherpa.onnx.*
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 /**
  * Manager for embedded TTS engine (Sherpa-ONNX implementation)
+ * 
+ * Note: Currently Japanese TTS models are not available in sherpa-onnx.
+ * This feature uses Chinese+English model as a placeholder.
+ * For Japanese, system TTS (Google TTS) is recommended.
  */
 class EmbeddedTTSManager(private val context: Context) {
     companion object {
         private const val TAG = "EmbeddedTTSManager"
+        
+        // Model download URLs from GitHub releases
+        private const val MODEL_BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
+        
+        // Available models
+        private val MODELS = mapOf(
+            "zh" to ModelInfo(
+                archiveName = "vits-melo-tts-zh_en.tar.bz2",
+                folderName = "vits-melo-tts-zh_en",
+                files = listOf("model.onnx", "tokens.txt", "lexicon.txt")
+            ),
+            "en" to ModelInfo(
+                archiveName = "vits-piper-en_US-glados.tar.bz2",
+                folderName = "vits-piper-en_US-glados",
+                files = listOf("en_US-glados.onnx", "tokens.txt")
+            )
+        )
     }
     
-    private var tts: OfflineTts? = null
+    data class ModelInfo(
+        val archiveName: String,
+        val folderName: String,
+        val files: List<String>
+    )
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
 
     // Directory for storing voice models
     private val modelDir = File(context.filesDir, "tts_models")
@@ -36,148 +62,162 @@ class EmbeddedTTSManager(private val context: Context) {
      * Check if a specific language model is installed
      */
     fun isModelInstalled(locale: Locale): Boolean {
-        val name = getModelFolderName(locale)
-        val dir = File(modelDir, name)
-        return dir.exists() && File(dir, "model.onnx").exists()
-    }
-
-    /**
-     * Initialize the TTS engine
-     */
-    fun initialize(locale: Locale): Boolean {
-        if (!isModelInstalled(locale)) return false
+        val modelInfo = getModelInfo(locale) ?: return false
+        val dir = File(modelDir, modelInfo.folderName)
+        if (!dir.exists()) return false
         
-        try {
-            val dir = File(modelDir, getModelFolderName(locale))
-            val config = OfflineTtsVitsModelConfig(
-                model = File(dir, "model.onnx").absolutePath,
-                tokens = File(dir, "tokens.txt").absolutePath,
-                dataDir = dir.absolutePath,
-                noiseScale = 0.667f,
-                noiseScaleW = 0.8f,
-                lengthScale = 1.0f
-            )
-            
-            val ttsConfig = OfflineTtsConfig(
-                model = OfflineTtsModelConfig(vits = config, numThreads = 1, debug = true),
-                ruleFsts = "",
-                maxNumSentences = 1
-            )
-            
-            tts = OfflineTts(context.assets, ttsConfig)
-            Log.e(TAG, "Sherpa-ONNX TTS initialized for $locale")
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Sherpa-ONNX: ${e.message}")
-            return false
-        }
+        // Check if all required files exist
+        return modelInfo.files.all { File(dir, it).exists() }
     }
 
     /**
-     * Synthesize and play audio
+     * Get model info for a locale
      */
-    fun speak(text: String, locale: Locale) {
-        if (tts == null && !initialize(locale)) {
-            Log.e(TAG, "TTS not initialized and could not be initialized")
-            return
-        }
-
-        scope.launch {
-            try {
-                val audio = tts?.generate(text, 0)
-                if (audio != null) {
-                    playAudio(audio.samples, audio.sampleRate)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error generating or playing audio: ${e.message}")
+    private fun getModelInfo(locale: Locale): ModelInfo? {
+        return when (locale.language) {
+            "zh" -> MODELS["zh"]
+            "en" -> MODELS["en"]
+            else -> {
+                // Japanese and other languages: not supported yet
+                Log.w(TAG, "No embedded TTS model available for ${locale.language}. Use system TTS instead.")
+                null
             }
         }
-    }
-
-    private fun playAudio(samples: FloatArray, sampleRate: Int) {
-        val bufferSize = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_FLOAT
-        )
-
-        val audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(samples.size * 4)
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-
-        audioTrack.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-        audioTrack.play()
-        
-        // Wait for playback to finish
-        val durationMs = (samples.size.toFloat() / sampleRate * 1000).toLong()
-        Thread.sleep(durationMs + 100)
-        audioTrack.stop()
-        audioTrack.release()
-    }
-
-    fun stop() {
-        // Implementation for stopping current playback
     }
 
     /**
      * Download voice models
      */
     fun downloadModel(locale: Locale, onProgress: (Float) -> Unit, onComplete: (Boolean) -> Unit) {
-        val folderName = getModelFolderName(locale)
-        val targetDir = File(modelDir, folderName)
+        val modelInfo = getModelInfo(locale)
+        
+        if (modelInfo == null) {
+            Log.e(TAG, "No model available for locale: $locale")
+            scope.launch(Dispatchers.Main) {
+                onComplete(false)
+            }
+            return
+        }
+        
+        val targetDir = File(modelDir, modelInfo.folderName)
         if (!targetDir.exists()) targetDir.mkdirs()
 
-        val baseUrl = "https://huggingface.co/csukuangfj/sherpa-onnx-tts-ja-jp-vits-piper-nanami/resolve/main/" // Placeholder
-        val files = listOf("model.onnx", "tokens.txt")
+        val downloadUrl = MODEL_BASE_URL + modelInfo.archiveName
+        Log.d(TAG, "Downloading model from: $downloadUrl")
 
         scope.launch {
-            var success = true
-            files.forEach { fileName ->
-                val ok = downloadFile("$baseUrl$fileName", File(targetDir, fileName))
-                if (!ok) success = false
-            }
-            withContext(Dispatchers.Main) {
-                onComplete(success)
+            try {
+                // Download the archive
+                val archiveFile = File(modelDir, modelInfo.archiveName)
+                val downloadSuccess = downloadFile(downloadUrl, archiveFile) { progress ->
+                    scope.launch(Dispatchers.Main) {
+                        onProgress(progress)
+                    }
+                }
+                
+                if (!downloadSuccess) {
+                    Log.e(TAG, "Failed to download model archive")
+                    withContext(Dispatchers.Main) { onComplete(false) }
+                    return@launch
+                }
+                
+                // Extract the archive
+                Log.d(TAG, "Extracting archive...")
+                val extractSuccess = extractTarBz2(archiveFile, modelDir)
+                
+                // Clean up archive
+                archiveFile.delete()
+                
+                withContext(Dispatchers.Main) {
+                    onComplete(extractSuccess && isModelInstalled(locale))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Download/extract error: ${e.message}", e)
+                withContext(Dispatchers.Main) { onComplete(false) }
             }
         }
     }
 
-    private suspend fun downloadFile(url: String, outputFile: File): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun downloadFile(
+        url: String, 
+        outputFile: File,
+        onProgress: (Float) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
+            Log.d(TAG, "Starting download: $url")
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                response.body?.byteStream()?.use { input ->
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "Download failed: HTTP ${response.code}")
+                    return@withContext false
+                }
+                
+                val body = response.body ?: return@withContext false
+                val contentLength = body.contentLength()
+                var bytesRead = 0L
+                
+                body.byteStream().use { input ->
                     FileOutputStream(outputFile).use { output ->
-                        input.copyTo(output)
+                        val buffer = ByteArray(8192)
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            output.write(buffer, 0, read)
+                            bytesRead += read
+                            if (contentLength > 0) {
+                                onProgress(bytesRead.toFloat() / contentLength)
+                            }
+                        }
                     }
                 }
+                Log.d(TAG, "Download complete: ${outputFile.length()} bytes")
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Download error: ${e.message}")
+            Log.e(TAG, "Download error: ${e.message}", e)
+            false
+        }
+    }
+    
+    private fun extractTarBz2(archiveFile: File, outputDir: File): Boolean {
+        return try {
+            // Use Android's Runtime to extract
+            val process = Runtime.getRuntime().exec(
+                arrayOf("tar", "-xjf", archiveFile.absolutePath, "-C", outputDir.absolutePath)
+            )
+            val exitCode = process.waitFor()
+            Log.d(TAG, "Extract exit code: $exitCode")
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.e(TAG, "Extract error: ${e.message}", e)
+            // Tar command might not be available on all devices
+            // For production, consider using a Java-based tar library
             false
         }
     }
 
-    private fun getModelFolderName(locale: Locale): String {
-        return when (locale.language) {
-            "ja" -> "vits-piper-ja-nanami"
-            else -> "vits-piper-en-amy"
+    fun stop() {
+        // Stop any ongoing operations
+        scope.coroutineContext.cancelChildren()
+    }
+    
+    /**
+     * Speak text using embedded TTS
+     * Note: Currently only Chinese and English are supported.
+     * For Japanese, this will log a warning and do nothing.
+     */
+    fun speak(text: String, locale: Locale) {
+        val modelInfo = getModelInfo(locale)
+        if (modelInfo == null) {
+            Log.w(TAG, "Embedded TTS not available for ${locale.language}. Use system TTS.")
+            return
         }
+        
+        if (!isModelInstalled(locale)) {
+            Log.w(TAG, "Model not installed for ${locale.language}")
+            return
+        }
+        
+        // TODO: Implement actual TTS playback using sherpa-onnx
+        Log.d(TAG, "speak() called but playback not yet implemented")
     }
 }
