@@ -69,13 +69,6 @@ android {
     }
 }
 
-repositories {
-    google()
-    mavenCentral()
-    maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
-    maven { url = uri("https://jitpack.io") }
-}
-
 dependencies {
     // Core Android
     implementation("androidx.core:core-ktx:1.12.0")
@@ -108,8 +101,8 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // Built-in TTS: Sherpa-ONNX
-    implementation("com.k2fsa.sherpa.onnx:sherpa-onnx:1.10.15:arm64-v8aRelease@aar")
+    // Built-in TTS: Sherpa-ONNX (Stable coordinate)
+    implementation("com.k2fsa.sherpa.onnx:sherpa-onnx:1.10.15")
     
     // Testing
     testImplementation("junit:junit:4.13.2")
