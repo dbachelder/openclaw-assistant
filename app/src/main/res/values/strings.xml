@@ -35,6 +35,7 @@
     <string name="settings_title">Settings</string>
     <string name="webhook_url_label">Webhook URL</string>
     <string name="webhook_url_hint">https://your-server/hooks/voice</string>
+    <string name="insecure_url_error">URL must be HTTPS or a local network address.</string>
     <string name="auth_token_label">Auth Token (optional)</string>
     <string name="auth_token_hint">Optional</string>
     <string name="session_id_label">Session ID</string>

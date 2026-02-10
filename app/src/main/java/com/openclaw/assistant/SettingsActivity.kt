@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
+import com.openclaw.assistant.util.NetworkUtils
 import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
@@ -76,6 +77,10 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
+    val isUrlSecure = remember(webhookUrl) {
+        NetworkUtils.isUrlSecure(webhookUrl)
+    }
+
     // TTS Engines
     var ttsEngine by remember { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
@@ -117,7 +122,7 @@ fun SettingsScreen(
                             settings.customWakeWord = customWakeWord
                             onSave()
                         },
-                        enabled = webhookUrl.isNotBlank() && !isTesting
+                        enabled = webhookUrl.isNotBlank() && !isTesting && isUrlSecure
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -160,7 +165,15 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        isError = webhookUrl.isBlank()
+                        isError = webhookUrl.isBlank() || (webhookUrl.isNotBlank() && !isUrlSecure),
+                        supportingText = {
+                            if (webhookUrl.isNotBlank() && !isUrlSecure) {
+                                Text(
+                                    text = stringResource(R.string.insecure_url_error),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -192,7 +205,7 @@ fun SettingsScreen(
                     // Test Connection Button
                     Button(
                         onClick = {
-                            if (webhookUrl.isBlank()) return@Button
+                            if (webhookUrl.isBlank() || !isUrlSecure) return@Button
                             scope.launch {
                                 try {
                                     isTesting = true
@@ -224,7 +237,7 @@ fun SettingsScreen(
                                 else -> MaterialTheme.colorScheme.primary
                             }
                         ),
-                        enabled = webhookUrl.isNotBlank() && !isTesting
+                        enabled = webhookUrl.isNotBlank() && !isTesting && isUrlSecure
                     ) {
                         if (isTesting) {
                             CircularProgressIndicator(
