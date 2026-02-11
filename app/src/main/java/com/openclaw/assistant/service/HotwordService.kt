@@ -49,6 +49,10 @@ class HotwordService : Service(), VoskRecognitionListener {
         fun stop(context: Context) {
             context.stopService(Intent(context, HotwordService::class.java))
         }
+
+        fun shouldCopyModel(currentVersion: Int, savedVersion: Int, targetDirExists: Boolean, targetDirNotEmpty: Boolean): Boolean {
+            return !(savedVersion == currentVersion && targetDirExists && targetDirNotEmpty)
+        }
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -168,9 +172,38 @@ class HotwordService : Service(), VoskRecognitionListener {
 
     private fun copyAssets(): String? {
         val targetDir = java.io.File(filesDir, "model")
-        try {
-            copyAssetFolder(assets, "model", targetDir.absolutePath)
+
+        // Check version to avoid redundant copy
+        val currentVersion = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionCode
+            }
+        } catch (e: Exception) {
+            1
+        }
+
+        val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+        val savedVersion = prefs.getInt("model_version", 0)
+
+        if (!shouldCopyModel(currentVersion, savedVersion, targetDir.exists(), targetDir.list()?.isNotEmpty() == true)) {
+            Log.d(TAG, "Model version $savedVersion matches current $currentVersion. Skipping copy.")
             return targetDir.absolutePath
+        }
+
+        try {
+            if (targetDir.exists()) {
+                targetDir.deleteRecursively()
+            }
+
+            val success = copyAssetFolder(assets, "model", targetDir.absolutePath)
+            if (success) {
+                prefs.edit().putInt("model_version", currentVersion).apply()
+                return targetDir.absolutePath
+            }
+            return null
         } catch (e: Exception) {
             return null
         }
