@@ -13,6 +13,30 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
+fun executeCommand(vararg command: String): String {
+    return try {
+        val process = ProcessBuilder(*command)
+            .directory(rootProject.projectDir)
+            .redirectOutput(ProcessBuilder.Redirect.PIPE)
+            .redirectError(ProcessBuilder.Redirect.PIPE)
+            .start()
+        process.waitFor(10, TimeUnit.SECONDS)
+        process.inputStream.bufferedReader().readText().trim()
+    } catch (e: Exception) {
+        ""
+    }
+}
+
+fun getTagName(): String {
+    val tag = executeCommand("git", "describe", "--tags", "--always", "--dirty")
+    return tag.ifBlank { "v1.1.1-debug" }
+}
+
+fun getTagVersionCode(): Int {
+    val count = executeCommand("git", "rev-list", "--count", "HEAD")
+    return try { count.toInt() } catch (e: Exception) { 1 }
+}
+
 android {
     namespace = "com.openclaw.assistant"
     compileSdk = 34
@@ -21,8 +45,8 @@ android {
         applicationId = "com.openclaw.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.1.1"
+        versionCode = getTagVersionCode()
+        versionName = getTagName()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -30,6 +54,13 @@ android {
         }
         
 
+    }
+    
+    tasks.register("printVersion") {
+        doLast {
+            println("Version Name: ${getTagName()}")
+            println("Version Code: ${getTagVersionCode()}")
+        }
     }
 
     signingConfigs {
