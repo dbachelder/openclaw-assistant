@@ -135,11 +135,18 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun toggleHotwordService(enabled: Boolean) {
-        settings.hotwordEnabled = enabled
         if (enabled) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, getString(R.string.mic_permission_required), Toast.LENGTH_SHORT).show()
+                permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                return
+            }
+            settings.hotwordEnabled = true
             HotwordService.start(this)
             Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
         } else {
+            settings.hotwordEnabled = false
             HotwordService.stop(this)
             Toast.makeText(this, getString(R.string.hotword_stopped), Toast.LENGTH_SHORT).show()
         }
@@ -227,7 +234,7 @@ fun MainScreen(
 
             Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CompactActionCard(modifier = Modifier.weight(1f).fillMaxHeight(), icon = Icons.Default.Home, title = stringResource(R.string.home_button), description = if (isAssistantSet) stringResource(R.string.active) else stringResource(R.string.not_set), isActive = isAssistantSet, onClick = onOpenAssistantSettings, showInfoIcon = true, onInfoClick = { showTroubleshooting = true })
-                CompactActionCard(modifier = Modifier.weight(1f).fillMaxHeight(), icon = Icons.Default.Mic, title = settings.getWakeWordDisplayName(), description = if (hotwordEnabled) stringResource(R.string.active) else stringResource(R.string.disabled), isActive = hotwordEnabled, showSwitch = true, switchValue = hotwordEnabled, onSwitchChange = { enabled -> if (enabled && !isConfigured) return@CompactActionCard; hotwordEnabled = enabled; onToggleHotword(enabled) })
+                CompactActionCard(modifier = Modifier.weight(1f).fillMaxHeight(), icon = Icons.Default.Mic, title = settings.getWakeWordDisplayName(), description = if (hotwordEnabled) stringResource(R.string.active) else stringResource(R.string.disabled), isActive = hotwordEnabled, showSwitch = true, switchValue = hotwordEnabled, onSwitchChange = { enabled -> if (enabled && !isConfigured) return@CompactActionCard; onToggleHotword(enabled); hotwordEnabled = settings.hotwordEnabled })
             }
 
             Spacer(modifier = Modifier.height(24.dp))

@@ -18,3 +18,7 @@
 
 # Tink (Security Crypto)
 -dontwarn com.google.crypto.tink.**
+
+# Vosk speech recognition
+-keep class org.vosk.** { *; }
+-dontwarn org.vosk.**
