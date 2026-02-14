@@ -1,0 +1,10 @@
+{"date":"2026-02-09T11:44:50Z","message":"Merge pull request #3 from asmundstavdahl/2026-02-09_add-unsigned-release-build\n\nfix(build): add missing dependency"}
+{"date":"2026-02-09T11:43:51Z","message":"fix(build): add missing dependency"}
+{"date":"2026-02-09T11:37:20Z","message":"Merge pull request #2 from asmundstavdahl/2026-02-09_add-unsigned-release-build\n\nfix(asset): convert JPEG disguised as PNG an actual PNG"}
+{"date":"2026-02-09T11:35:53Z","message":"fix(asset): convert JPEG disguised as PNG an actual PNG"}
+{"date":"2026-02-09T10:53:11Z","message":"Merge pull request #1 from asmundstavdahl/2026-02-09_add-unsigned-release-build\n\nchore(ci): add an unsigned release APK build to GitHub workflow"}
+{"date":"2026-02-09T10:49:07Z","message":"chore(ci): add an unsigned release APK build to GitHub workflow"}
+{"date":"2026-02-05T07:14:20Z","message":"Merge pull request #7 from yuga-hashimoto/fix/compilation-errors-mainactivity\n\nfix: resolve compilation errors in MainActivity"}
+{"date":"2026-02-05T07:14:12Z","message":"fix: resolve compilation errors in MainActivity\n\n- Corrected 'context' variable scope issues in AlertDialog loops\n- Fixed resource ID resolution for localized strings\n- Improved variable definitions for Compose previews/stability"}
+{"date":"2026-02-05T07:10:22Z","message":"Merge pull request #6 from yuga-hashimoto/fix/brute-force-tts-initialization\n\nForce TTS Recovery for Hidden MIUI Engines"}
+{"date":"2026-02-05T07:05:24Z","message":"fix: brute-force TTS initialization and detect hidden engines for MIUI\n\n- Added Package Manager check to identify Google TTS even when hidden by system\n- Implemented brute-force initialization sequence targeting com.google.android.tts\n- Added manual re-initialization trigger in Diagnostic Panel\n- Improved diagnostic messages to clarify 'hidden engine' common in Chinese ROMs"}

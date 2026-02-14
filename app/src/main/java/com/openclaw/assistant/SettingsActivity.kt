@@ -67,10 +67,16 @@ fun SettingsScreen(
     var continuousMode by remember { mutableStateOf(settings.continuousMode) }
     var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
     var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
+    var streamingEnabled by remember { mutableStateOf(settings.streamingEnabled) }
+    var ttsProvider by remember { mutableStateOf(settings.ttsProvider) }
+    var ttsApiKey by remember { mutableStateOf(settings.ttsApiKey) }
+    var ttsVoice by remember { mutableStateOf(settings.ttsVoice) }
+    var ttsModel by remember { mutableStateOf(settings.ttsModel) }
 
     var showAuthToken by remember { mutableStateOf(false) }
     var showWakeWordMenu by remember { mutableStateOf(false) }
     var showConnectionModeMenu by remember { mutableStateOf(false) }
+    var showTtsProviderMenu by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -120,6 +126,11 @@ fun SettingsScreen(
                             settings.continuousMode = continuousMode
                             settings.wakeWordPreset = wakeWordPreset
                             settings.customWakeWord = customWakeWord
+                            settings.streamingEnabled = streamingEnabled
+                            settings.ttsProvider = ttsProvider
+                            settings.ttsApiKey = ttsApiKey
+                            settings.ttsVoice = ttsVoice
+                            settings.ttsModel = ttsModel
                             onSave()
                         },
                         enabled = webhookUrl.isNotBlank() && !isTesting
@@ -315,6 +326,30 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // === STREAMING SECTION ===
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.streaming_label), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.streaming_description), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Switch(checked = streamingEnabled, onCheckedChange = { streamingEnabled = it })
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // === VOICE SECTION ===
@@ -436,6 +471,88 @@ fun SettingsScreen(
                                     valueRange = 0.5f..3.0f,
                                     steps = 24, // Steps of 0.1
                                     modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
+
+                        // TTS Provider Selection
+                        Text(stringResource(R.string.tts_provider_label), style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        ExposedDropdownMenuBox(
+                            expanded = showTtsProviderMenu,
+                            onExpandedChange = { showTtsProviderMenu = it }
+                        ) {
+                            val providerLabel = when (ttsProvider) {
+                                "openai" -> stringResource(R.string.tts_provider_openai)
+                                "elevenlabs" -> stringResource(R.string.tts_provider_elevenlabs)
+                                "fish_audio" -> stringResource(R.string.tts_provider_fish_audio)
+                                else -> stringResource(R.string.tts_provider_local)
+                            }
+                            OutlinedTextField(
+                                value = providerLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.tts_provider_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showTtsProviderMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = showTtsProviderMenu,
+                                onDismissRequest = { showTtsProviderMenu = false }
+                            ) {
+                                listOf(
+                                    "local" to stringResource(R.string.tts_provider_local),
+                                    "openai" to stringResource(R.string.tts_provider_openai),
+                                    "elevenlabs" to stringResource(R.string.tts_provider_elevenlabs),
+                                    "fish_audio" to stringResource(R.string.tts_provider_fish_audio)
+                                ).forEach { (value, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            ttsProvider = value
+                                            showTtsProviderMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (ttsProvider == value) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Show API Key / Voice / Model fields for cloud providers
+                        if (ttsProvider != "local") {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = ttsApiKey,
+                                onValueChange = { value: String -> ttsApiKey = value },
+                                label = { Text(stringResource(R.string.tts_api_key_label)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = ttsVoice,
+                                onValueChange = { value: String -> ttsVoice = value },
+                                label = { Text(stringResource(R.string.tts_voice_label)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            if (ttsProvider == "openai") {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = ttsModel,
+                                    onValueChange = { value: String -> ttsModel = value },
+                                    label = { Text(stringResource(R.string.tts_model_label)) },
+                                    placeholder = { Text("tts-1") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
                                 )
                             }
                         }

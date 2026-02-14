@@ -34,6 +34,9 @@ interface ChatDao {
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     fun getMessagesForSession(sessionId: String): Flow<List<MessageEntity>>
 
+    @Query("UPDATE messages SET content = :content WHERE id = :messageId")
+    suspend fun updateContent(messageId: String, content: String)
+
     @Query("DELETE FROM messages WHERE sessionId = :sessionId")
     suspend fun deleteMessagesForSession(sessionId: String)
 }

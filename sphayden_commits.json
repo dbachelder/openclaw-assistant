@@ -1,0 +1,10 @@
+{"date":"2026-02-10T18:36:21Z","message":"Merge remote-tracking branch 'upstream/main'"}
+{"date":"2026-02-10T17:59:56Z","message":"Feat: Add SSE streaming, cloud TTS, and AudioPlayer\n\n- Add SSE streaming support for real-time response display\n  - New SSEParser.kt for Server-Sent Events parsing\n  - OpenClawClient.sendMessageStream() returns Flow\u003cStreamEvent\u003e\n  - ChatViewModel and OpenClawSession branch on streamingEnabled setting\n  - Progressive message updates via Room DB (create on first chunk, update on subsequent)\n  - TTS starts at first sentence boundary via Channel\u003cString\u003e feeding TTSOrchestrator\n\n- Add cloud TTS providers (OpenAI, ElevenLabs, Fish Audio)\n  - TTSOrchestrator routes to configured provider with local fallback\n  - TTSProvider interface with OpenAI, ElevenLabs, and Fish Audio implementations\n  - AudioPlayer for URL/byte-based audio playback via MediaPlayer\n\n- Add streaming toggle in Settings (default enabled)\n- Update network security config for user-installed CA certificates\n- Add .ai/ feature docs and .claude/ config"}
+{"date":"2026-02-10T12:29:07Z","message":"chore: enable github sponsors"}
+{"date":"2026-02-06T23:20:19Z","message":"Merge pull request #22 from yuga-hashimoto/feat-allow-cleartext\n\nFeat: Allow cleartext traffic (HTTP)"}
+{"date":"2026-02-06T23:19:32Z","message":"Feat: Allow cleartext traffic (HTTP) for local/VPN usage (Fixes #21)"}
+{"date":"2026-02-06T15:55:13Z","message":"Merge pull request #20 from yuga-hashimoto/fix-custom-ca\n\nFeat: Add network security config to trust user CA"}
+{"date":"2026-02-06T15:52:19Z","message":"Feat: Add network security config to trust user-installed CA certificates (Fixes #19)"}
+{"date":"2026-02-06T13:42:43Z","message":"Docs: Update config references to openclaw.json and use JSON format"}
+{"date":"2026-02-06T08:25:42Z","message":"Add MIT License"}
+{"date":"2026-02-06T08:11:45Z","message":"Bump version to 1.0.4"}

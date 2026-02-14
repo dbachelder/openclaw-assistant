@@ -1,0 +1,10 @@
+{"date":"2026-02-09T16:17:51Z","message":"Fix: Structural fix for ChatViewModel.kt to resolve build environment issues"}
+{"date":"2026-02-09T15:57:22Z","message":"Fix: Remove 'private' from broadcast helpers to fix GitHub Actions build error"}
+{"date":"2026-02-09T15:54:29Z","message":"Fix: Robust message handling in ChatViewModel.kt to resolve silent chat issue"}
+{"date":"2026-02-09T14:38:37Z","message":"no5"}
+{"date":"2026-02-09T14:30:34Z","message":"no4"}
+{"date":"2026-02-09T14:25:38Z","message":"no3"}
+{"date":"2026-02-09T13:56:59Z","message":"Fix: Downgrade SettingsRepository to standard SharedPreferences for reliable token loading on service startup (to resolve 1008 error)"}
+{"date":"2026-02-09T13:37:44Z","message":"no2"}
+{"date":"2026-02-09T12:47:37Z","message":"Fix: Explicit WebSocket connection on session start (attempt to solve token persistence issue)"}
+{"date":"2026-02-09T12:16:52Z","message":"please work"}

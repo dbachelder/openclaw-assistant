@@ -110,6 +110,99 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_TTS_ENGINE, "") ?: ""
         set(value) = prefs.edit().putString(KEY_TTS_ENGINE, value).apply()
 
+    // TTS Provider (local, openai, elevenlabs, fish_audio)
+    var ttsProvider: String
+        get() = prefs.getString(KEY_TTS_PROVIDER, TTS_PROVIDER_LOCAL) ?: TTS_PROVIDER_LOCAL
+        set(value) = prefs.edit().putString(KEY_TTS_PROVIDER, value).apply()
+
+    // OpenAI TTS API Key
+    var openaiTtsApiKey: String
+        get() = prefs.getString(KEY_OPENAI_TTS_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OPENAI_TTS_API_KEY, value).apply()
+
+    // OpenAI TTS Voice
+    var openaiTtsVoice: String
+        get() = prefs.getString(KEY_OPENAI_TTS_VOICE, "nova") ?: "nova"
+        set(value) = prefs.edit().putString(KEY_OPENAI_TTS_VOICE, value).apply()
+
+    // OpenAI TTS Model
+    var openaiTtsModel: String
+        get() = prefs.getString(KEY_OPENAI_TTS_MODEL, "tts-1") ?: "tts-1"
+        set(value) = prefs.edit().putString(KEY_OPENAI_TTS_MODEL, value).apply()
+
+    // ElevenLabs TTS API Key
+    var elevenlabsTtsApiKey: String
+        get() = prefs.getString(KEY_ELEVENLABS_TTS_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_ELEVENLABS_TTS_API_KEY, value).apply()
+
+    // ElevenLabs TTS Voice ID
+    var elevenlabsTtsVoice: String
+        get() = prefs.getString(KEY_ELEVENLABS_TTS_VOICE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_ELEVENLABS_TTS_VOICE, value).apply()
+
+    // Fish Audio TTS API Key
+    var fishAudioTtsApiKey: String
+        get() = prefs.getString(KEY_FISH_AUDIO_TTS_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_FISH_AUDIO_TTS_API_KEY, value).apply()
+
+    // Fish Audio TTS Reference ID (voice model)
+    var fishAudioTtsReferenceId: String
+        get() = prefs.getString(KEY_FISH_AUDIO_TTS_REFERENCE_ID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_FISH_AUDIO_TTS_REFERENCE_ID, value).apply()
+
+    // Fish Audio TTS Model
+    var fishAudioTtsModel: String
+        get() = prefs.getString(KEY_FISH_AUDIO_TTS_MODEL, "s1") ?: "s1"
+        set(value) = prefs.edit().putString(KEY_FISH_AUDIO_TTS_MODEL, value).apply()
+
+    // Convenience: current provider's API key
+    var ttsApiKey: String
+        get() = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsApiKey
+            TTS_PROVIDER_ELEVENLABS -> elevenlabsTtsApiKey
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsApiKey
+            else -> ""
+        }
+        set(value) = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsApiKey = value
+            TTS_PROVIDER_ELEVENLABS -> elevenlabsTtsApiKey = value
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsApiKey = value
+            else -> {}
+        }
+
+    // Convenience: current provider's voice
+    var ttsVoice: String
+        get() = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsVoice
+            TTS_PROVIDER_ELEVENLABS -> elevenlabsTtsVoice
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsReferenceId
+            else -> ""
+        }
+        set(value) = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsVoice = value
+            TTS_PROVIDER_ELEVENLABS -> elevenlabsTtsVoice = value
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsReferenceId = value
+            else -> {}
+        }
+
+    // Convenience: current provider's model
+    var ttsModel: String
+        get() = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsModel
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsModel
+            else -> ""
+        }
+        set(value) = when (ttsProvider) {
+            TTS_PROVIDER_OPENAI -> openaiTtsModel = value
+            TTS_PROVIDER_FISH_AUDIO -> fishAudioTtsModel = value
+            else -> {}
+        }
+
+    // Streaming enabled (SSE)
+    var streamingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STREAMING_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_STREAMING_ENABLED, value).apply()
+
     // Connection Mode: "auto" | "websocket" | "http"
     var connectionMode: String
         get() = prefs.getString(KEY_CONNECTION_MODE, "auto") ?: "auto"
@@ -155,6 +248,21 @@ class SettingsRepository(context: Context) {
         private const val KEY_TTS_ENGINE = "tts_engine"
         private const val KEY_CONNECTION_MODE = "connection_mode"
         private const val KEY_GATEWAY_PORT = "gateway_port"
+        private const val KEY_TTS_PROVIDER = "tts_provider"
+        private const val KEY_OPENAI_TTS_API_KEY = "openai_tts_api_key"
+        private const val KEY_OPENAI_TTS_VOICE = "openai_tts_voice"
+        private const val KEY_OPENAI_TTS_MODEL = "openai_tts_model"
+        private const val KEY_ELEVENLABS_TTS_API_KEY = "elevenlabs_tts_api_key"
+        private const val KEY_ELEVENLABS_TTS_VOICE = "elevenlabs_tts_voice"
+        private const val KEY_FISH_AUDIO_TTS_API_KEY = "fish_audio_tts_api_key"
+        private const val KEY_FISH_AUDIO_TTS_REFERENCE_ID = "fish_audio_tts_reference_id"
+        private const val KEY_FISH_AUDIO_TTS_MODEL = "fish_audio_tts_model"
+        private const val KEY_STREAMING_ENABLED = "streaming_enabled"
+
+        const val TTS_PROVIDER_LOCAL = "local"
+        const val TTS_PROVIDER_OPENAI = "openai"
+        const val TTS_PROVIDER_ELEVENLABS = "elevenlabs"
+        const val TTS_PROVIDER_FISH_AUDIO = "fish_audio"
 
         // Wake word presets
         const val WAKE_WORD_OPEN_CLAW = "open_claw"

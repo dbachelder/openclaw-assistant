@@ -135,6 +135,25 @@
     <string name="connection_status_disconnected">Disconnected</string>
     <string name="connection_status_reconnecting">Reconnecting…</string>
 
+    <!-- TTS Provider -->
+    <string name="tts_provider_label">TTS Provider</string>
+    <string name="tts_provider_local">Device (Local)</string>
+    <string name="tts_provider_openai">OpenAI</string>
+    <string name="tts_provider_elevenlabs">ElevenLabs</string>
+    <string name="tts_provider_fish_audio">Fish Audio</string>
+    <string name="tts_api_key_label">API Key</string>
+    <string name="tts_voice_label">Voice</string>
+    <string name="tts_model_label">Model</string>
+    <string name="tts_reference_id_label">Reference ID</string>
+    <string name="tts_test_voice">Test Voice</string>
+    <string name="tts_test_speaking">Speaking…</string>
+    <string name="tts_test_success">Voice test passed</string>
+    <string name="tts_test_failed">Voice test failed: %s</string>
+
+    <!-- Streaming -->
+    <string name="streaming_label">Streaming (SSE)</string>
+    <string name="streaming_description">Show responses in real-time as they stream in</string>
+
     <!-- Chat UI -->
     <string name="conversations_title">Conversations</string>
     <string name="new_chat">New Chat</string>

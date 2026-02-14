@@ -8,11 +8,15 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.api.OpenClawClient
+import com.openclaw.assistant.api.StreamEvent
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.gateway.ConnectionState
 import com.openclaw.assistant.gateway.GatewayClient
+import com.openclaw.assistant.speech.AudioPlayer
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.SpeechResult
+import com.openclaw.assistant.speech.TTSManager
+import com.openclaw.assistant.speech.tts.TTSOrchestrator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
@@ -54,6 +58,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val apiClient = OpenClawClient()
     private val gatewayClient = GatewayClient.getInstance()
     private val speechManager = SpeechRecognizerManager(application)
+
+    // Cloud TTS / Audio
+    private val audioPlayer = AudioPlayer(application)
+    private val ttsManager = TTSManager(application)
+    private val ttsOrchestrator = TTSOrchestrator(application, ttsManager, audioPlayer, settings)
 
     // WebSocket streaming state
     private var currentRunId: String? = null
@@ -268,6 +277,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun sendViaHttp(sessionId: String, text: String) {
+        if (settings.streamingEnabled) {
+            sendViaHttpStreaming(sessionId, text)
+        } else {
+            sendViaHttpBlocking(sessionId, text)
+        }
+    }
+
+    private suspend fun sendViaHttpBlocking(sessionId: String, text: String) {
         val result = apiClient.sendMessage(
             webhookUrl = settings.webhookUrl,
             message = text,
@@ -281,12 +298,80 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 chatRepository.addMessage(sessionId, responseText, isUser = false)
 
                 _uiState.update { it.copy(isThinking = false) }
-                afterResponseReceived(responseText)
+
+                // Play server audio if available, otherwise use TTS
+                if (response.hasServerAudio()) {
+                    playServerAudio(response.audioUrl!!, responseText)
+                } else {
+                    afterResponseReceived(responseText)
+                }
             },
             onFailure = { error ->
                 _uiState.update { it.copy(isThinking = false, error = error.message) }
             }
         )
+    }
+
+    private suspend fun sendViaHttpStreaming(sessionId: String, text: String) {
+        val fullText = StringBuilder()
+        var messageId: String? = null
+
+        try {
+            _uiState.update { it.copy(isThinking = false, isStreaming = true, streamingContent = "") }
+
+            // Create an initial empty assistant message in the DB
+            messageId = chatRepository.addMessage(sessionId, "...", isUser = false)
+
+            apiClient.sendMessageStream(
+                webhookUrl = settings.webhookUrl,
+                message = text,
+                sessionId = sessionId,
+                authToken = settings.authToken.takeIf { it.isNotBlank() }
+            ).collect { event ->
+                when (event) {
+                    is StreamEvent.Text -> {
+                        fullText.append(event.chunk)
+                        val currentText = fullText.toString()
+                        _uiState.update { it.copy(streamingContent = currentText) }
+                        // Update DB periodically (every ~20 chars)
+                        if (messageId != null && fullText.length % 20 < event.chunk.length) {
+                            chatRepository.updateMessageContent(messageId, currentText)
+                        }
+                    }
+                    is StreamEvent.Done -> {
+                        val finalText = event.fullText.ifBlank { fullText.toString() }
+                        if (messageId != null) {
+                            chatRepository.updateMessageContent(messageId, finalText)
+                        }
+                        _uiState.update { it.copy(isStreaming = false, streamingContent = null) }
+                        afterResponseReceived(finalText)
+                    }
+                    is StreamEvent.Error -> {
+                        val partial = fullText.toString()
+                        if (messageId != null && partial.isNotBlank()) {
+                            chatRepository.updateMessageContent(messageId, partial)
+                        }
+                        _uiState.update { it.copy(isStreaming = false, streamingContent = null, error = event.message) }
+                    }
+                }
+            }
+
+            // If flow completed without Done event
+            val pending = fullText.toString()
+            if (_uiState.value.isStreaming && pending.isNotBlank()) {
+                if (messageId != null) {
+                    chatRepository.updateMessageContent(messageId, pending)
+                }
+                _uiState.update { it.copy(isStreaming = false, streamingContent = null) }
+                afterResponseReceived(pending)
+            }
+        } catch (e: Exception) {
+            val partial = fullText.toString()
+            if (messageId != null && partial.isNotBlank()) {
+                chatRepository.updateMessageContent(messageId, partial)
+            }
+            _uiState.update { it.copy(isThinking = false, isStreaming = false, streamingContent = null, error = e.message) }
+        }
     }
 
     private fun onStreamFinal() {
@@ -434,10 +519,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         speakingJob = viewModelScope.launch {
             _uiState.update { it.copy(isSpeaking = true) }
 
-            val success = if (isTTSReady && tts != null) {
-                speakWithTTS(text)
-            } else {
-                Log.e(TAG, "TTS not ready, skipping speech")
+            val success = try {
+                ttsOrchestrator.speak(text)
+            } catch (e: Exception) {
+                Log.e(TAG, "TTS speak failed", e)
                 false
             }
 
@@ -445,105 +530,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             // If it was a voice conversation and continuous mode is on, continue listening
             if (success && lastInputWasVoice && settings.continuousMode) {
-                // Explicit cleanup and wait for TTS to fully release audio focus
                 speechManager.destroy()
                 kotlinx.coroutines.delay(1000)
-
-                // Restart listening
                 startListening()
             } else {
-                // Conversation ended
                 sendResumeBroadcast()
             }
         }
     }
 
-    private suspend fun speakWithTTS(text: String): Boolean {
-        // Use timeout + polling fallback in case TTS callbacks don't fire
-        val callbackResult = withTimeoutOrNull(90_000L) {
-            suspendCancellableCoroutine { continuation ->
-                val utteranceId = UUID.randomUUID().toString()
+    private fun playServerAudio(audioUrl: String, responseText: String) {
+        speakingJob = viewModelScope.launch {
+            _uiState.update { it.copy(isSpeaking = true) }
+            val success = audioPlayer.playFromUrl(audioUrl)
+            _uiState.update { it.copy(isSpeaking = false) }
 
-                val listener = object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        Log.d(TAG, "TTS onStart")
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        Log.d(TAG, "TTS onDone")
-                        if (continuation.isActive) {
-                            continuation.resume(true)
-                        }
-                    }
-
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                        Log.d(TAG, "TTS onStop, interrupted=$interrupted")
-                        if (continuation.isActive) {
-                            continuation.resume(false)
-                        }
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        Log.e(TAG, "TTS onError (deprecated)")
-                        if (continuation.isActive) {
-                            continuation.resume(false)
-                        }
-                    }
-
-                    override fun onError(utteranceId: String?, errorCode: Int) {
-                        Log.e(TAG, "TTS onError: $errorCode")
-                        if (continuation.isActive) {
-                            continuation.resume(false)
-                        }
-                    }
-                }
-
-                tts?.setOnUtteranceProgressListener(listener)
-                val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-                Log.d(TAG, "TTS speak result=$result, text length=${text.length}")
-
-                if (result != TextToSpeech.SUCCESS) {
-                    Log.e(TAG, "TTS speak failed immediately with result=$result")
-                    if (continuation.isActive) {
-                        continuation.resume(false)
-                    }
-                } else {
-                    // Polling fallback: check tts.isSpeaking() periodically
-                    // in case onDone callback never fires (common on some devices)
-                    viewModelScope.launch {
-                        delay(2000) // Wait at least 2s before polling
-                        while (continuation.isActive) {
-                            val speaking = tts?.isSpeaking ?: false
-                            if (!speaking) {
-                                Log.w(TAG, "TTS poll detected speech finished (callback missed)")
-                                if (continuation.isActive) {
-                                    continuation.resume(true)
-                                }
-                                break
-                            }
-                            delay(500)
-                        }
-                    }
-                }
-
-                continuation.invokeOnCancellation {
-                    tts?.stop()
-                }
+            if (success && lastInputWasVoice && settings.continuousMode) {
+                speechManager.destroy()
+                delay(1000)
+                startListening()
+            } else {
+                sendResumeBroadcast()
             }
         }
-
-        if (callbackResult == null) {
-            Log.w(TAG, "TTS timed out after 90s, forcing stop")
-            tts?.stop()
-            return false
-        }
-        return callbackResult
     }
 
     fun stopSpeaking() {
-        lastInputWasVoice = false // Stop loop if manually stopped
-        tts?.stop()
+        lastInputWasVoice = false
+        ttsOrchestrator.stop()
         speakingJob?.cancel()
         speakingJob = null
         _uiState.update { it.copy(isSpeaking = false) }
@@ -555,8 +569,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         speechManager.destroy()
+        ttsOrchestrator.shutdown()
         sendResumeBroadcast()
-        // Don't shutdown TTS here - Activity owns it
     }
 
     private fun sendPauseBroadcast() {

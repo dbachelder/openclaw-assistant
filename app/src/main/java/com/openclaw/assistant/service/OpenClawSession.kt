@@ -39,9 +39,11 @@ import com.openclaw.assistant.R
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.gateway.GatewayClient
+import com.openclaw.assistant.speech.AudioPlayer
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.TTSManager
 import com.openclaw.assistant.speech.SpeechResult
+import com.openclaw.assistant.speech.tts.TTSOrchestrator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
@@ -71,6 +73,8 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     private val gatewayClient = GatewayClient.getInstance()
     private lateinit var speechManager: SpeechRecognizerManager
     private lateinit var ttsManager: TTSManager
+    private lateinit var audioPlayer: AudioPlayer
+    private lateinit var ttsOrchestrator: TTSOrchestrator
     
     // Repository
     private val chatRepository = com.openclaw.assistant.data.repository.ChatRepository.getInstance(context)
@@ -111,6 +115,8 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
         speechManager = SpeechRecognizerManager(context)
         ttsManager = TTSManager(context)
+        audioPlayer = AudioPlayer(context)
+        ttsOrchestrator = TTSOrchestrator(context, ttsManager, audioPlayer, settings)
         Log.e(TAG, "Session onCreate completed")
     }
 
@@ -201,7 +207,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
         abandonAudioFocus()
         scope.cancel()
         speechManager.destroy()
-        ttsManager.stop()
+        ttsOrchestrator.stop()
 
         // Resume Hotword
         sendResumeBroadcast()
@@ -214,7 +220,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
         // Resume Hotword (safety)
         sendResumeBroadcast()
         
-        ttsManager.shutdown()
+        ttsOrchestrator.shutdown()
         toneGenerator.release()
     }
 
@@ -436,13 +442,17 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
         currentState.value = AssistantState.SPEAKING
 
         scope.launch {
-            val success = ttsManager.speak(text)
+            val success = try {
+                ttsOrchestrator.speak(text)
+            } catch (e: Exception) {
+                Log.e(TAG, "TTS orchestrator failed", e)
+                false
+            }
 
             // Abandon audio focus after TTS completes
             abandonAudioFocus()
 
             if (success) {
-                // 読み上げ完了後、連続会話モードが有効なら再度リスニング開始
                 if (settings.continuousMode) {
                     delay(500)
                     startListening()
