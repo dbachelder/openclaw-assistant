@@ -1,5 +1,6 @@
 package com.openclaw.assistant.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,10 +9,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.openclaw.assistant.MainActivity
 import com.openclaw.assistant.R
 import com.openclaw.assistant.data.SettingsRepository
@@ -99,8 +105,28 @@ class HotwordService : Service(), VoskRecognitionListener {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Safety net: catch uncaught Vosk thread crashes to prevent app-wide crash
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            val isVoskCrash = throwable.stackTrace.any {
+                it.className.startsWith("org.vosk")
+            }
+            if (isVoskCrash) {
+                Log.e(TAG, "Caught uncaught Vosk exception on thread ${thread.name}", throwable)
+                speechService = null
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (!isSessionActive) {
+                        resumeHotwordDetection()
+                    }
+                }
+            } else {
+                previousHandler?.uncaughtException(thread, throwable)
+            }
+        }
+
         settings = SettingsRepository.getInstance(this)
-        
+
         createNotificationChannel()
         
         val filter = IntentFilter().apply {
@@ -246,18 +272,60 @@ class HotwordService : Service(), VoskRecognitionListener {
 
     private fun startHotwordListening() {
         if (model == null || isSessionActive) return
+
+        // Verify RECORD_AUDIO permission before touching AudioRecord
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO permission not granted. Cannot start hotword listening.")
+            return
+        }
+
+        // Pre-validate that AudioRecord can actually be created
+        val bufferSize = AudioRecord.getMinBufferSize(
+            16000,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            Log.e(TAG, "AudioRecord.getMinBufferSize failed: $bufferSize")
+            return
+        }
+        val testRecord = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                16000,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "AudioRecord creation failed", e)
+            null
+        }
+        if (testRecord == null || testRecord.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord failed to initialize. Mic may be in use or unavailable.")
+            testRecord?.release()
+            return
+        }
+        testRecord.release()
+
         try {
             // Get wake words from settings
             val wakeWords = settings.getWakeWords()
             val wakeWordsJson = wakeWords.joinToString("\", \"", "[\"", "\"]")
             Log.d(TAG, "Starting hotword detection with words: $wakeWordsJson")
-            
+
             val rec = Recognizer(model, SAMPLE_RATE, wakeWordsJson)
             speechService = SpeechService(rec, SAMPLE_RATE)
             speechService?.startListening(this)
             Log.d(TAG, "Hotword listening started")
-        } catch (e: IOException) {
-            Log.e(TAG, "Start error", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start hotword listening", e)
+            speechService = null
+            scope.launch {
+                delay(5000)
+                if (!isSessionActive) resumeHotwordDetection()
+            }
         }
     }
 

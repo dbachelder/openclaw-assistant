@@ -1,9 +1,12 @@
 package com.openclaw.assistant.receiver
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.service.HotwordService
 
@@ -23,8 +26,13 @@ class BootReceiver : BroadcastReceiver() {
             val settings = SettingsRepository.getInstance(context)
             
             if (settings.hotwordEnabled && settings.isConfigured()) {
-                Log.d(TAG, "Starting HotwordService on boot")
-                HotwordService.start(context)
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Starting HotwordService on boot")
+                    HotwordService.start(context)
+                } else {
+                    Log.w(TAG, "RECORD_AUDIO not granted, skipping HotwordService on boot")
+                }
             }
         }
     }
