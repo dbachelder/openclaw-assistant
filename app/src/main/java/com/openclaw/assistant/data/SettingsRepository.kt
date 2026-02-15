@@ -125,6 +125,31 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_IS_VERIFIED, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_VERIFIED, value).apply()
 
+    // Default Agent ID
+    var defaultAgentId: String
+        get() = prefs.getString(KEY_DEFAULT_AGENT_ID, "main") ?: "main"
+        set(value) = prefs.edit().putString(KEY_DEFAULT_AGENT_ID, value).apply()
+
+    /**
+     * Get the chat completions URL.
+     * Supports both base URL (http://server) and full path (http://server/v1/chat/completions).
+     */
+    fun getChatCompletionsUrl(): String {
+        val url = webhookUrl.trimEnd('/')
+        return if (url.contains("/v1/")) url
+        else "$url/v1/chat/completions"
+    }
+
+    /**
+     * Get the base URL (without path) for WebSocket connections.
+     * Extracts base from full path URLs, or returns as-is for base URLs.
+     */
+    fun getBaseUrl(): String {
+        val url = webhookUrl.trimEnd('/')
+        val idx = url.indexOf("/v1/")
+        return if (idx > 0) url.substring(0, idx) else url
+    }
+
     // Check if configured
     fun isConfigured(): Boolean {
         return webhookUrl.isNotBlank() && isVerified
@@ -155,6 +180,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_TTS_ENGINE = "tts_engine"
         private const val KEY_CONNECTION_MODE = "connection_mode"
         private const val KEY_GATEWAY_PORT = "gateway_port"
+        private const val KEY_DEFAULT_AGENT_ID = "default_agent_id"
 
         // Wake word presets
         const val WAKE_WORD_OPEN_CLAW = "open_claw"

@@ -344,7 +344,12 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
     private suspend fun sendViaWebSocket(message: String) {
         try {
-            val sessionKey = gatewayClient.mainSessionKey ?: "main"
+            val agentId = settings.defaultAgentId.takeIf { it.isNotBlank() && it != "main" }
+            val sessionKey = if (agentId != null) {
+                "agent:$agentId:main"
+            } else {
+                gatewayClient.mainSessionKey ?: "main"
+            }
             gatewayClient.sendChat(sessionKey, message)
 
             // Observe streaming text until chat event signals completion
@@ -389,11 +394,13 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     }
 
     private suspend fun sendViaHttp(message: String) {
+        val agentId = settings.defaultAgentId.takeIf { it.isNotBlank() && it != "main" }
         val result = apiClient.sendMessage(
-            webhookUrl = settings.webhookUrl,
+            webhookUrl = settings.getChatCompletionsUrl(),
             message = message,
             sessionId = settings.sessionId,
-            authToken = settings.authToken.takeIf { it.isNotBlank() }
+            authToken = settings.authToken.takeIf { it.isNotBlank() },
+            agentId = agentId
         )
 
         result.fold(

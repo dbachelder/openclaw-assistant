@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
@@ -50,6 +51,7 @@ import com.openclaw.assistant.speech.TTSUtils
 import com.openclaw.assistant.ui.chat.ChatMessage
 import com.openclaw.assistant.ui.chat.ChatUiState
 import com.openclaw.assistant.ui.chat.ChatViewModel
+import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.gateway.ConnectionState
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.material3.TextButton
@@ -116,7 +118,8 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onBack = { finish() },
                     onSelectSession = { viewModel.selectSession(it) },
                     onCreateSession = { viewModel.createNewSession() },
-                    onDeleteSession = { viewModel.deleteSession(it) }
+                    onDeleteSession = { viewModel.deleteSession(it) },
+                    onAgentSelected = { viewModel.setAgent(it) }
                 )
             }
         }
@@ -209,7 +212,8 @@ fun ChatScreen(
     onBack: () -> Unit,
     onSelectSession: (String) -> Unit,
     onCreateSession: () -> Unit,
-    onDeleteSession: (String) -> Unit
+    onDeleteSession: (String) -> Unit,
+    onAgentSelected: (String?) -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -314,13 +318,27 @@ fun ChatScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                stringResource(R.string.app_name),
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            ConnectionIndicator(uiState.connectionState)
+                        val sessionTitle = allSessions.find { it.id == currentSessionId }?.title
+                            ?: stringResource(R.string.new_chat)
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    sessionTitle,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                ConnectionIndicator(uiState.connectionState)
+                            }
+                            if (uiState.availableAgents.isNotEmpty()) {
+                                AgentSelector(
+                                    agents = uiState.availableAgents,
+                                    selectedAgentId = uiState.selectedAgentId,
+                                    onAgentSelected = onAgentSelected
+                                )
+                            }
                         }
                     },
                     navigationIcon = {
@@ -565,6 +583,49 @@ fun ConnectionIndicator(state: ConnectionState) {
             fontSize = 10.sp,
             color = color
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AgentSelector(
+    agents: List<AgentInfo>,
+    selectedAgentId: String?,
+    onAgentSelected: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedAgent = agents.find { it.id == selectedAgentId }
+    val displayName = selectedAgent?.name ?: stringResource(R.string.agent_selector)
+
+    Box {
+        AssistChip(
+            onClick = { expanded = true },
+            label = { Text(displayName, fontSize = 11.sp, maxLines = 1) }
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            agents.forEach { agent ->
+                DropdownMenuItem(
+                    text = { Text(agent.name) },
+                    onClick = {
+                        onAgentSelected(agent.id)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (agent.id == selectedAgentId) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                )
+            }
+        }
     }
 }
 

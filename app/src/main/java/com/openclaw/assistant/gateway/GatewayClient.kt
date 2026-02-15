@@ -76,6 +76,9 @@ class GatewayClient {
     private val _streamingText = MutableStateFlow<String?>(null)
     val streamingText: StateFlow<String?> = _streamingText.asStateFlow()
 
+    private val _agentList = MutableStateFlow<AgentListResult?>(null)
+    val agentList: StateFlow<AgentListResult?> = _agentList.asStateFlow()
+
     /** The main session key received from the server during connect. */
     @Volatile
     var mainSessionKey: String? = null
@@ -124,6 +127,7 @@ class GatewayClient {
             mainSessionKey = null
             _connectionState.value = ConnectionState.DISCONNECTED
             _streamingText.value = null
+            _agentList.value = null
         }
     }
 
@@ -168,6 +172,19 @@ class GatewayClient {
         }
         val result = request("chat.history", params)
         return parseChatHistory(result.payload)
+    }
+
+    /**
+     * Fetch the list of available agents from the gateway.
+     */
+    suspend fun getAgentList(): AgentListResult? {
+        return try {
+            val result = request("agents.list", null)
+            parseAgentListResult(result.payload).also { _agentList.value = it }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get agent list: ${e.message}")
+            null
+        }
     }
 
     /**
@@ -236,6 +253,15 @@ class GatewayClient {
         _connectionState.value = ConnectionState.CONNECTED
         Log.d(TAG, "Connected to $url, mainSessionKey=$mainSessionKey")
 
+        // Auto-fetch agent list after successful connect
+        scope.launch {
+            try {
+                getAgentList()
+            } catch (e: Exception) {
+                Log.w(TAG, "Auto-fetch agent list failed: ${e.message}")
+            }
+        }
+
         // Wait until socket closes
         closeDeferred?.await()
         _connectionState.value = ConnectionState.DISCONNECTED
@@ -252,10 +278,10 @@ class GatewayClient {
         }
 
         val clientObj = JsonObject().apply {
-            addProperty("id", "openclaw-assistant")
+            addProperty("id", "openclaw-android")
             addProperty("version", "1.0")
             addProperty("platform", "android")
-            addProperty("mode", "operator")
+            addProperty("mode", "ui")
         }
 
         val params = JsonObject().apply {
@@ -422,6 +448,22 @@ class GatewayClient {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse agent event: ${e.message}")
         }
+    }
+
+    // --- Internal: Agent list parsing ---
+
+    private fun parseAgentListResult(payload: JsonObject?): AgentListResult? {
+        if (payload == null) return null
+        val defaultId = payload.get("defaultId")?.asString ?: "main"
+        val agentsArray = payload.getAsJsonArray("agents") ?: return AgentListResult(defaultId, emptyList())
+
+        val agents = agentsArray.mapNotNull { item ->
+            val obj = item.asJsonObject ?: return@mapNotNull null
+            val id = obj.get("id")?.asString ?: return@mapNotNull null
+            val name = obj.get("name")?.asString ?: id
+            AgentInfo(id = id, name = name)
+        }
+        return AgentListResult(defaultId = defaultId, agents = agents)
     }
 
     // --- Internal: Chat history parsing ---

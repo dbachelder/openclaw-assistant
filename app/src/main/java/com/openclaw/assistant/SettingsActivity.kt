@@ -25,7 +25,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.gateway.AgentInfo
+import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
@@ -60,6 +63,7 @@ fun SettingsScreen(
 ) {
     var webhookUrl by remember { mutableStateOf(settings.webhookUrl) }
     var authToken by remember { mutableStateOf(settings.authToken) }
+    var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
     var connectionMode by remember { mutableStateOf(settings.connectionMode) }
     var gatewayPort by remember { mutableStateOf(settings.gatewayPort.toString()) }
     var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
@@ -79,14 +83,23 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
+    // Agent list from gateway
+    val gatewayClient = remember { GatewayClient.getInstance() }
+    var availableAgents by remember { mutableStateOf<List<AgentInfo>>(emptyList()) }
+    var isFetchingAgents by remember { mutableStateOf(false) }
+    var showAgentMenu by remember { mutableStateOf(false) }
+
     // TTS Engines
     var ttsEngine by remember { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
     var showEngineMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // Load engines off-main thread ideally, but for now simple
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
+        // Load existing agent list if gateway is already connected
+        gatewayClient.agentList.value?.let {
+            availableAgents = it.agents
+        }
     }
 
     // Wake word options
@@ -112,6 +125,7 @@ fun SettingsScreen(
                         onClick = {
                             settings.webhookUrl = webhookUrl
                             settings.authToken = authToken
+                            settings.defaultAgentId = defaultAgentId
                             settings.connectionMode = connectionMode
                             settings.gatewayPort = gatewayPort.toIntOrNull() ?: 18789
                             settings.ttsEnabled = ttsEnabled
@@ -194,6 +208,63 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Default Agent
+                    if (availableAgents.isNotEmpty()) {
+                        // Dropdown when agents are loaded
+                        ExposedDropdownMenuBox(
+                            expanded = showAgentMenu,
+                            onExpandedChange = { showAgentMenu = it }
+                        ) {
+                            val agentLabel = availableAgents.find { it.id == defaultAgentId }?.name ?: defaultAgentId
+                            OutlinedTextField(
+                                value = agentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.default_agent_label)) },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showAgentMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = showAgentMenu,
+                                onDismissRequest = { showAgentMenu = false }
+                            ) {
+                                availableAgents.forEach { agent ->
+                                    DropdownMenuItem(
+                                        text = { Text(agent.name) },
+                                        onClick = {
+                                            defaultAgentId = agent.id
+                                            showAgentMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (defaultAgentId == agent.id) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Text field fallback before connection
+                        OutlinedTextField(
+                            value = defaultAgentId,
+                            onValueChange = { defaultAgentId = it },
+                            label = { Text(stringResource(R.string.default_agent_label)) },
+                            placeholder = { Text(stringResource(R.string.default_agent_hint)) },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            trailingIcon = {
+                                if (isFetchingAgents) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // Connection Mode
                     ExposedDropdownMenuBox(
                         expanded = showConnectionModeMenu,
@@ -262,13 +333,55 @@ fun SettingsScreen(
                                 try {
                                     isTesting = true
                                     testResult = null
-                                    val result = apiClient.testConnection(webhookUrl, authToken)
+                                    // Compute chat completions URL for testing
+                                    val testUrl = webhookUrl.trimEnd('/').let { url ->
+                                        if (url.contains("/v1/")) url else "$url/v1/chat/completions"
+                                    }
+                                    val result = apiClient.testConnection(testUrl, authToken)
                                     result.fold(
                                         onSuccess = {
                                             testResult = TestResult(success = true, message = context.getString(R.string.connected))
                                             settings.webhookUrl = webhookUrl
                                             settings.authToken = authToken
                                             settings.isVerified = true
+
+                                            // Fetch agent list via WebSocket
+                                            scope.launch {
+                                                isFetchingAgents = true
+                                                try {
+                                                    val baseUrl = webhookUrl.trimEnd('/').let { u ->
+                                                        val idx = u.indexOf("/v1/")
+                                                        if (idx > 0) u.substring(0, idx) else u
+                                                    }
+                                                    val parsedUrl = java.net.URL(baseUrl)
+                                                    val host = parsedUrl.host
+                                                    val useTls = parsedUrl.protocol == "https"
+                                                    val port = if (useTls) {
+                                                        if (parsedUrl.port > 0) parsedUrl.port else 443
+                                                    } else {
+                                                        gatewayPort.toIntOrNull() ?: if (parsedUrl.port > 0) parsedUrl.port else 18789
+                                                    }
+                                                    val token = authToken.takeIf { t -> t.isNotBlank() }
+
+                                                    if (!gatewayClient.isConnected()) {
+                                                        gatewayClient.connect(host, port, token, useTls = useTls)
+                                                        // Wait for connection
+                                                        for (i in 1..20) {
+                                                            delay(250)
+                                                            if (gatewayClient.isConnected()) break
+                                                        }
+                                                    }
+
+                                                    if (gatewayClient.isConnected()) {
+                                                        val agentResult = gatewayClient.getAgentList()
+                                                        availableAgents = agentResult?.agents ?: emptyList()
+                                                    }
+                                                } catch (e: Exception) {
+                                                    // Silently fail - text field remains as fallback
+                                                } finally {
+                                                    isFetchingAgents = false
+                                                }
+                                            }
                                         },
                                         onFailure = {
                                             testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))

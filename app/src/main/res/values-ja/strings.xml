@@ -9,8 +9,8 @@
     <string name="default_session_title_format">音声セッション %s</string>
     <string name="chat_session_title_format">チャット %s</string>
     <string name="settings_title">設定</string>
-    <string name="webhook_url_label">Webhook URL</string>
-    <string name="webhook_url_hint">https://your-server/v1/chat/completions</string>
+    <string name="webhook_url_label">サーバーURL</string>
+    <string name="webhook_url_hint">https://your-server</string>
     <string name="auth_token_label">認証トークン（任意）</string>
     <string name="auth_token_hint">任意</string>
     <string name="session_id_label">セッションID</string>
@@ -115,6 +115,11 @@
     <string name="mic_permission_denied_permanently">マイクの権限が永久に拒否されています。ウェイクワード検知を使用するには、アプリの設定から権限を有効にしてください。</string>
     <string name="open_settings">設定を開く</string>
     <string name="cancel">キャンセル</string>
+
+    <!-- Agent -->
+    <string name="default_agent_label">デフォルトAgent</string>
+    <string name="default_agent_hint">main</string>
+    <string name="agent_selector">Agent</string>
 
     <!-- Chat UI -->
     <string name="conversations_title">会話</string>

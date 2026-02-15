@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.gateway.ConnectionState
 import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
@@ -41,7 +42,9 @@ data class ChatUiState(
     val error: String? = null,
     val partialText: String = "", // For real-time speech transcription
     val streamingContent: String? = null, // Real-time AI response text
-    val connectionState: ConnectionState = ConnectionState.DISCONNECTED
+    val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
+    val availableAgents: List<AgentInfo> = emptyList(),
+    val selectedAgentId: String? = null // null = use default from settings
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -148,6 +151,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Observe agent list from gateway
+        viewModelScope.launch {
+            gatewayClient.agentList.collect { agentListResult ->
+                _uiState.update { it.copy(
+                    availableAgents = agentListResult?.agents ?: emptyList()
+                )}
+            }
+        }
+
         // Auto-connect to WebSocket if configured
         connectGatewayIfNeeded()
     }
@@ -156,11 +168,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val connectionMode = settings.connectionMode
         if (connectionMode == "http") return
 
-        val webhookUrl = settings.webhookUrl
-        if (webhookUrl.isBlank()) return
+        val baseUrl = settings.getBaseUrl()
+        if (baseUrl.isBlank()) return
 
         try {
-            val url = java.net.URL(webhookUrl)
+            val url = java.net.URL(baseUrl)
             val host = url.host
             val useTls = url.protocol == "https"
 
@@ -231,6 +243,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         isTTSReady = true
     }
 
+    fun setAgent(agentId: String?) {
+        _uiState.update { it.copy(selectedAgentId = agentId) }
+    }
+
+    private fun getEffectiveAgentId(): String? {
+        val selected = _uiState.value.selectedAgentId
+        if (selected != null) return selected
+        val default = settings.defaultAgentId
+        return if (default.isNotBlank() && default != "main") default else null
+    }
+
     fun sendMessage(text: String) {
         if (text.isBlank()) return
 
@@ -257,7 +280,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun sendViaWebSocket(sessionId: String, text: String) {
         try {
-            val sessionKey = gatewayClient.mainSessionKey ?: "main"
+            val agentId = getEffectiveAgentId()
+            val sessionKey = if (agentId != null) {
+                "agent:$agentId:main"
+            } else {
+                gatewayClient.mainSessionKey ?: "main"
+            }
             currentRunId = gatewayClient.sendChat(sessionKey, text)
             _uiState.update { it.copy(isThinking = false, isStreaming = true) }
             // Response will arrive via chatEvents + agentEvents observers
@@ -269,10 +297,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun sendViaHttp(sessionId: String, text: String) {
         val result = apiClient.sendMessage(
-            webhookUrl = settings.webhookUrl,
+            webhookUrl = settings.getChatCompletionsUrl(),
             message = text,
             sessionId = sessionId,
-            authToken = settings.authToken.takeIf { it.isNotBlank() }
+            authToken = settings.authToken.takeIf { it.isNotBlank() },
+            agentId = getEffectiveAgentId()
         )
 
         result.fold(
@@ -336,7 +365,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopGeneration() {
-        val sessionKey = gatewayClient.mainSessionKey ?: "main"
+        val agentId = getEffectiveAgentId()
+        val sessionKey = if (agentId != null) {
+            "agent:$agentId:main"
+        } else {
+            gatewayClient.mainSessionKey ?: "main"
+        }
         viewModelScope.launch {
             gatewayClient.abortChat(sessionKey, currentRunId)
         }
