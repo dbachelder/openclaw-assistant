@@ -114,13 +114,23 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val fileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        uri?.let { viewModel.setPendingAttachment(it) }
+        uri?.let {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Could not persist read permission for URI: $it", e)
+            }
+            viewModel.setPendingAttachment(it)
+        }
     }
 
     private fun launchCamera() {
-        val cacheDir = File(cacheDir, "camera")
-        cacheDir.mkdirs()
-        val file = File(cacheDir, "photo_${System.currentTimeMillis()}.jpg")
+        val cameraDir = File(filesDir, "camera")
+        cameraDir.mkdirs()
+        val file = File(cameraDir, "photo_${System.currentTimeMillis()}.jpg")
         cameraImageUri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
         cameraLauncher.launch(cameraImageUri!!)
     }
@@ -138,7 +148,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun onGalleryClick() {
-        galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+        galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
     private fun onFileClick() {
@@ -596,7 +606,7 @@ fun MessageBubble(message: ChatMessage) {
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = message.attachmentFileName ?: "File",
+                                    text = message.attachmentFileName ?: stringResource(android.R.string.untitled),
                                     color = contentColor,
                                     fontSize = 14.sp
                                 )

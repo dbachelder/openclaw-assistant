@@ -23,7 +23,7 @@ object ImageCompressor {
         val fileName = getFileName(context, uri) ?: "file"
 
         return if (mimeType.startsWith("image/")) {
-            compressImage(context, uri, mimeType, fileName)
+            compressImage(context, uri, fileName)
         } else {
             readFileAsBase64(context, uri, mimeType, fileName)
         }
@@ -32,7 +32,6 @@ object ImageCompressor {
     private fun compressImage(
         context: Context,
         uri: Uri,
-        mimeType: String,
         fileName: String
     ): AttachmentData? {
         return try {
@@ -112,16 +111,25 @@ object ImageCompressor {
     ): AttachmentData? {
         return try {
             val inputStream = context.contentResolver.openInputStream(uri) ?: return null
-            val bytes = inputStream.readBytes()
-            inputStream.close()
+            inputStream.use { stream ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                val output = ByteArrayOutputStream()
+                var totalBytesRead = 0L
+                while (true) {
+                    val bytesRead = stream.read(buffer)
+                    if (bytesRead == -1) break
+                    totalBytesRead += bytesRead
+                    if (totalBytesRead > MAX_FILE_SIZE_BYTES) {
+                        Log.w(TAG, "File too large: $totalBytesRead bytes")
+                        return null
+                    }
+                    output.write(buffer, 0, bytesRead)
+                }
 
-            if (bytes.size > MAX_FILE_SIZE_BYTES) {
-                Log.w(TAG, "File too large: ${bytes.size} bytes")
-                return null
+                val bytes = output.toByteArray()
+                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                AttachmentData(base64 = base64, mimeType = mimeType, fileName = fileName)
             }
-
-            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-            AttachmentData(base64 = base64, mimeType = mimeType, fileName = fileName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read file", e)
             null

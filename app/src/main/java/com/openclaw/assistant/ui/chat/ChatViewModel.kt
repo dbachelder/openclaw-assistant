@@ -264,6 +264,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } else {
+                clearPendingAttachment()
                 _uiState.update { it.copy(error = context.getString(com.openclaw.assistant.R.string.file_too_large)) }
             }
         }

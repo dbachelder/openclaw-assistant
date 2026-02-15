@@ -56,18 +56,22 @@ fun AttachmentPreview(
             Spacer(modifier = Modifier.width(8.dp))
 
             Text(
-                text = fileName ?: "File",
+                text = fileName ?: stringResource(android.R.string.untitled),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
                 maxLines = 1
             )
 
-            IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.requiredSizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            ) {
                 Icon(
                     Icons.Default.Close,
                     contentDescription = stringResource(R.string.remove_attachment),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
