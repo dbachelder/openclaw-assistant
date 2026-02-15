@@ -83,6 +83,8 @@ class OpenClawClient {
                 val text = extractResponseText(responseBody)
                 Result.success(OpenClawResponse(response = text ?: responseBody))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             FirebaseCrashlytics.getInstance().recordException(e)
             Result.failure(e)

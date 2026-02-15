@@ -202,6 +202,8 @@ class GatewayClient {
 
                 connectOnce(host, desiredPort, desiredToken, desiredUseTls)
                 attempt = 0
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Connection failed (attempt $attempt): ${e.message}")
                 if (attempt == 0) {

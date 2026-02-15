@@ -188,6 +188,8 @@ class HotwordService : Service(), VoskRecognitionListener {
                         if (!isSessionActive) startHotwordListening()
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Init error", e)
                 FirebaseCrashlytics.getInstance().recordException(e)
