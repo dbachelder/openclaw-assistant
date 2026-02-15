@@ -1,5 +1,6 @@
 package com.openclaw.assistant.api
 
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -83,6 +84,7 @@ class OpenClawClient {
                 Result.success(OpenClawResponse(response = text ?: responseBody))
             }
         } catch (e: Exception) {
+            FirebaseCrashlytics.getInstance().recordException(e)
             Result.failure(e)
         }
     }

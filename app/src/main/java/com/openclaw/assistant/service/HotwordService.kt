@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.openclaw.assistant.MainActivity
 import com.openclaw.assistant.R
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.openclaw.assistant.data.SettingsRepository
 import kotlinx.coroutines.*
 import org.vosk.Model
@@ -114,6 +115,7 @@ class HotwordService : Service(), VoskRecognitionListener {
             }
             if (isVoskCrash) {
                 Log.e(TAG, "Caught uncaught Vosk exception on thread ${thread.name}", throwable)
+                FirebaseCrashlytics.getInstance().recordException(throwable)
                 speechService = null
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     if (!isSessionActive) {
@@ -188,6 +190,7 @@ class HotwordService : Service(), VoskRecognitionListener {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Init error", e)
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
     }

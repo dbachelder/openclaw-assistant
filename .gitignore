@@ -5,3 +5,4 @@ build/
 .idea/
 
 *.keystore
+app/google-services.json
