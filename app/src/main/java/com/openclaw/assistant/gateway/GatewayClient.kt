@@ -458,7 +458,8 @@ class GatewayClient {
         val agentsArray = payload.getAsJsonArray("agents") ?: return AgentListResult(defaultId, emptyList())
 
         val agents = agentsArray.mapNotNull { item ->
-            val obj = item.asJsonObject ?: return@mapNotNull null
+            if (!item.isJsonObject) return@mapNotNull null
+            val obj = item.asJsonObject
             val id = obj.get("id")?.asString ?: return@mapNotNull null
             val name = obj.get("name")?.asString ?: id
             AgentInfo(id = id, name = name)

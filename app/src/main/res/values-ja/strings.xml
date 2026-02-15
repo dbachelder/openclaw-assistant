@@ -117,9 +117,9 @@
     <string name="cancel">キャンセル</string>
 
     <!-- Agent -->
-    <string name="default_agent_label">デフォルトAgent</string>
+    <string name="default_agent_label">デフォルトエージェント</string>
     <string name="default_agent_hint">main</string>
-    <string name="agent_selector">Agent</string>
+    <string name="agent_selector">エージェント</string>
 
     <!-- Chat UI -->
     <string name="conversations_title">会話</string>

@@ -1,6 +1,7 @@
 package com.openclaw.assistant
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -349,10 +350,7 @@ fun SettingsScreen(
                                             scope.launch {
                                                 isFetchingAgents = true
                                                 try {
-                                                    val baseUrl = webhookUrl.trimEnd('/').let { u ->
-                                                        val idx = u.indexOf("/v1/")
-                                                        if (idx > 0) u.substring(0, idx) else u
-                                                    }
+                                                    val baseUrl = settings.getBaseUrl()
                                                     val parsedUrl = java.net.URL(baseUrl)
                                                     val host = parsedUrl.host
                                                     val useTls = parsedUrl.protocol == "https"
@@ -377,7 +375,7 @@ fun SettingsScreen(
                                                         availableAgents = agentResult?.agents ?: emptyList()
                                                     }
                                                 } catch (e: Exception) {
-                                                    // Silently fail - text field remains as fallback
+                                                    Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
                                                 } finally {
                                                     isFetchingAgents = false
                                                 }

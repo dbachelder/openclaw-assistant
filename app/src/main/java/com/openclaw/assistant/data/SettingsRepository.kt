@@ -135,7 +135,8 @@ class SettingsRepository(context: Context) {
      * Supports both base URL (http://server) and full path (http://server/v1/chat/completions).
      */
     fun getChatCompletionsUrl(): String {
-        val url = webhookUrl.trimEnd('/')
+        val url = webhookUrl.trim().trimEnd('/')
+        if (url.isBlank()) return ""
         return if (url.contains("/v1/")) url
         else "$url/v1/chat/completions"
     }
