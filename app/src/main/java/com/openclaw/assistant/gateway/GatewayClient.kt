@@ -33,6 +33,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -206,7 +209,7 @@ class GatewayClient {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Connection failed (attempt $attempt): ${e.message}")
-                if (attempt == 0) {
+                if (attempt == 0 && !isTransientNetworkError(e)) {
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
                 attempt++
@@ -258,10 +261,10 @@ class GatewayClient {
         }
 
         val clientObj = JsonObject().apply {
-            addProperty("id", "openclaw-assistant")
+            addProperty("id", "openclaw-android")
             addProperty("version", "1.0")
             addProperty("platform", "android")
-            addProperty("mode", "operator")
+            addProperty("mode", "cli")
         }
 
         val params = JsonObject().apply {
@@ -474,7 +477,9 @@ class GatewayClient {
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Log.w(TAG, "WebSocket failure: ${t.message}")
-            FirebaseCrashlytics.getInstance().recordException(t)
+            if (!isTransientNetworkError(t)) {
+                FirebaseCrashlytics.getInstance().recordException(t)
+            }
             if (connectDeferred?.isCompleted == false) {
                 connectDeferred?.completeExceptionally(t)
             }
@@ -501,5 +506,16 @@ class GatewayClient {
             waiter.cancel()
         }
         pending.clear()
+    }
+
+    private fun isTransientNetworkError(t: Throwable): Boolean {
+        return t is SocketTimeoutException ||
+                t is SocketException ||
+                t is ConnectException ||
+                t is java.io.EOFException ||
+                t is javax.net.ssl.SSLException ||
+                t is java.net.ProtocolException ||
+                t is android.system.ErrnoException ||
+                (t.cause != null && isTransientNetworkError(t.cause!!))
     }
 }
