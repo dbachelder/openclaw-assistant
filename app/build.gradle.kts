@@ -48,8 +48,8 @@ android {
         applicationId = "com.openclaw.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = getTagVersionCode()
-        versionName = getTagName()
+        versionCode = 89  // v1.2.4
+        versionName = "1.2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
