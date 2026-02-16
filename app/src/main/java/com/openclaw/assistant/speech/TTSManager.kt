@@ -115,11 +115,11 @@ class TTSManager(private val context: Context) {
         val result = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 val utteranceId = UUID.randomUUID().toString()
-                @Volatile var started = false
+                val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
                 val listener = object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        started = true
+                        started.set(true)
                     }
                     override fun onDone(utteranceId: String?) { if (continuation.isActive) continuation.resume(true) }
                     override fun onStop(utteranceId: String?, interrupted: Boolean) { if (continuation.isActive) continuation.resume(false) }
@@ -140,11 +140,11 @@ class TTSManager(private val context: Context) {
                         CoroutineScope(Dispatchers.Main).launch {
                             // Wait for onStart (up to 10s)
                             var waitedMs = 0L
-                            while (!started && continuation.isActive && waitedMs < 10_000L) {
+                            while (!started.get() && continuation.isActive && waitedMs < 10_000L) {
                                 delay(200)
                                 waitedMs += 200
                             }
-                            if (!started || !continuation.isActive) return@launch
+                            if (!started.get() || !continuation.isActive) return@launch
                             // Now poll isSpeaking - only treat false as "done" after speech started
                             delay(1000)
                             while (continuation.isActive) {

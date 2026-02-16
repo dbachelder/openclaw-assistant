@@ -524,12 +524,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val callbackResult = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 val utteranceId = UUID.randomUUID().toString()
-                @Volatile var started = false
+                val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
                 val listener = object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         Log.d(TAG, "TTS onStart")
-                        started = true
+                        started.set(true)
                     }
 
                     override fun onDone(utteranceId: String?) {
@@ -578,11 +578,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     viewModelScope.launch {
                         // Wait for onStart (up to 10s)
                         var waitedMs = 0L
-                        while (!started && continuation.isActive && waitedMs < 10_000L) {
+                        while (!started.get() && continuation.isActive && waitedMs < 10_000L) {
                             delay(200)
                             waitedMs += 200
                         }
-                        if (!started || !continuation.isActive) return@launch
+                        if (!started.get() || !continuation.isActive) return@launch
                         // Now poll isSpeaking - only treat false as "done" after speech started
                         delay(1000)
                         while (continuation.isActive) {
