@@ -163,7 +163,15 @@ class HotwordService : Service(), VoskRecognitionListener {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                createNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
         initVosk()
         return START_STICKY
     }
@@ -217,6 +225,27 @@ class HotwordService : Service(), VoskRecognitionListener {
             .build()
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID + 1, notification)
+    }
+
+    private fun showMicUnavailableNotification() {
+        createNotificationChannel()
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_mic_unavailable_title))
+            .setContentText(getString(R.string.notification_mic_unavailable_content))
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID + 2, notification)
     }
 
     private fun createNotificationChannel() {
@@ -426,6 +455,7 @@ class HotwordService : Service(), VoskRecognitionListener {
         if (audioRetryCount >= MAX_AUDIO_RETRIES) {
             Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
             audioRetryCount = 0
+            showMicUnavailableNotification()
             return
         }
         audioRetryCount++

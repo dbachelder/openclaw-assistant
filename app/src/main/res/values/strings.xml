@@ -179,6 +179,10 @@
     <string name="notification_mic_permission_title">Microphone permission required</string>
     <string name="notification_mic_permission_content">Tap to grant permission for wake word detection</string>
 
+    <!-- Hotword mic unavailable notification -->
+    <string name="notification_mic_unavailable_title">Microphone unavailable</string>
+    <string name="notification_mic_unavailable_content">Another app may be using the microphone, or check your device settings</string>
+
     <!-- Permission status card -->
     <string name="permissions_missing_title">Permissions Required</string>
     <string name="permission_record_audio">Microphone</string>

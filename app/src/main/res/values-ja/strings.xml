@@ -135,6 +135,10 @@
     <string name="notification_session_title">会話中</string>
     <string name="notification_session_content">音声セッションがアクティブです</string>
 
+    <!-- Hotword mic unavailable notification -->
+    <string name="notification_mic_unavailable_title">マイクを利用できません</string>
+    <string name="notification_mic_unavailable_content">他のアプリがマイクを使用中か、デバイスの設定を確認してください</string>
+
     <!-- Chat UI -->
     <string name="conversations_title">会話</string>
     <string name="new_chat">新規チャット</string>
