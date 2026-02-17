@@ -89,7 +89,8 @@ fun SettingsScreen(
 
     // Agent list from gateway
     val gatewayClient = remember { GatewayClient.getInstance() }
-    var availableAgents by remember { mutableStateOf<List<AgentInfo>>(emptyList()) }
+    val agentListState by gatewayClient.agentList.collectAsState()
+    val availableAgents = agentListState?.agents ?: emptyList()
     var isFetchingAgents by remember { mutableStateOf(false) }
     var showAgentMenu by remember { mutableStateOf(false) }
 
@@ -104,9 +105,19 @@ fun SettingsScreen(
 
     // Reactively observe agent list from gateway (updates after connection test)
     LaunchedEffect(Unit) {
-        gatewayClient.agentList.collect { result ->
-            availableAgents = result?.agents ?: emptyList()
+        Log.e("SettingsActivity", "LaunchedEffect: Checking connection to fetch agents...")
+        if (gatewayClient.isConnected()) {
+            Log.e("SettingsActivity", "Already connected, fetching agent list...")
+            try {
+                gatewayClient.getAgentList()
+            } catch (e: Exception) {
+                Log.e("SettingsActivity", "Failed to auto-fetch agents: ${e.message}")
+            }
         }
+    }
+    
+    LaunchedEffect(availableAgents) {
+        Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
     }
 
     // Wake word options
@@ -254,7 +265,6 @@ fun SettingsScreen(
                                 }
                             }
                         }
-                    } else {
                         // Text field fallback before connection
                         OutlinedTextField(
                             value = defaultAgentId,
@@ -265,6 +275,26 @@ fun SettingsScreen(
                             trailingIcon = {
                                 if (isFetchingAgents) {
                                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    IconButton(onClick = {
+                                        scope.launch {
+                                            isFetchingAgents = true
+                                            Log.e("SettingsActivity", "Manual agent refresh clicked")
+                                            if (gatewayClient.isConnected()) {
+                                                try {
+                                                    gatewayClient.getAgentList()
+                                                } catch (e: Exception) {
+                                                    Log.e("SettingsActivity", "Manual fetch failed: ${e.message}")
+                                                    Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                            }
+                                            isFetchingAgents = false
+                                        }
+                                    }) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
@@ -379,8 +409,15 @@ fun SettingsScreen(
                                                     }
 
                                                     if (gatewayClient.isConnected()) {
-                                                        val agentResult = gatewayClient.getAgentList()
-                                                        availableAgents = agentResult?.agents ?: emptyList()
+                                                        Log.e("SettingsActivity", "Connection successful, fetching agent list...")
+                                                        try {
+                                                            val agentResult = gatewayClient.getAgentList()
+                                                            Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
+                                                        } catch (e: Exception) {
+                                                            Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
+                                                            // Show toast for this error specifically since it's part of the test
+                                                            Toast.makeText(context, "Connected, but failed to list agents: ${e.message}", Toast.LENGTH_LONG).show()
+                                                        }
                                                     }
                                                 } catch (e: Exception) {
                                                     Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")

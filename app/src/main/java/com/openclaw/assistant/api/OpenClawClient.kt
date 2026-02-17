@@ -36,6 +36,12 @@ class OpenClawClient {
         authToken: String? = null,
         agentId: String? = null
     ): Result<OpenClawResponse> = withContext(Dispatchers.IO) {
+        if (webhookUrl.isBlank()) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Webhook URL is not configured")
+            )
+        }
+
         try {
             // OpenAI Chat Completions format for /v1/chat/completions
             val requestBody = JsonObject().apply {
@@ -105,6 +111,12 @@ class OpenClawClient {
         webhookUrl: String,
         authToken: String?
     ): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (webhookUrl.isBlank()) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Webhook URL is not configured")
+            )
+        }
+
         try {
             // Try a HEAD request first (lightweight)
             var requestBuilder = Request.Builder()

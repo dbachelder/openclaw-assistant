@@ -153,6 +153,7 @@
     <string name="default_agent_label">Default Agent</string>
     <string name="default_agent_hint">main</string>
     <string name="agent_selector">Agent</string>
+    <string name="agent_default">Default</string>
 
     <!-- Session Foreground Service -->
     <string name="notification_session_channel_name">Voice Session</string>
@@ -165,4 +166,29 @@
     <string name="delete">Delete</string>
     <string name="menu">Menu</string>
     <string name="back">Back</string>
+
+    <!-- Permission Errors -->
+    <string name="permission_error_title">Agent Selection Unavailable</string>
+    <string name="permission_error_desc">Agent list cannot be loaded without \'operator.read\' scope.</string>
+    <string name="permission_error_action">Tap to see details</string>
+    <string name="action_copy_error">Copy Error</string>
+    <string name="error_copied">Error copied to clipboard</string>
+    <string name="action_open_settings">Open Settings</string>
+
+    <!-- Hotword permission notification -->
+    <string name="notification_mic_permission_title">Microphone permission required</string>
+    <string name="notification_mic_permission_content">Tap to grant permission for wake word detection</string>
+
+    <!-- Permission status card -->
+    <string name="permissions_missing_title">Permissions Required</string>
+    <string name="permission_record_audio">Microphone</string>
+    <string name="permission_record_audio_desc">Required for voice input and wake word detection</string>
+    <string name="permission_post_notifications">Notifications</string>
+    <string name="permission_post_notifications_desc">Required to show hotword service status</string>
+    <string name="permission_grant">Grant</string>
+
+    <!-- Fix Request -->
+    <string name="fix_request_label">To fix, ask your AI:</string>
+    <string name="fix_request_message">Please grant \'operator.read\' scope to my current API token.</string>
+    <string name="action_ask_ai">Ask AI to Fix</string>
 </resources>

@@ -154,6 +154,15 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Android 14+ requires RECORD_AUDIO runtime permission for foregroundServiceType="microphone"
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO permission not granted. Cannot start foreground service with microphone type.")
+            showPermissionNotification()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         startForeground(NOTIFICATION_ID, createNotification())
         initVosk()
         return START_STICKY
@@ -187,6 +196,27 @@ class HotwordService : Service(), VoskRecognitionListener {
         } catch (e: Exception) {}
         scope.cancel()
         speechService?.shutdown()
+    }
+
+    private fun showPermissionNotification() {
+        createNotificationChannel()
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_mic_permission_title))
+            .setContentText(getString(R.string.notification_mic_permission_content))
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID + 1, notification)
     }
 
     private fun createNotificationChannel() {

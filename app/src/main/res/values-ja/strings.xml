@@ -144,4 +144,20 @@
 
     <!-- Error Messages -->
     <string name="error_speech_input_timeout">音声入力がありませんでした</string>
+
+    <!-- Permission Errors -->
+    <string name="permission_error_title">エージェント選択が利用できません</string>
+    <string name="permission_error_desc">\'operator.read\'権限がないため、エージェントリストを読み込めません。</string>
+    <string name="permission_error_action">タップして詳細を確認</string>
+    <string name="action_copy_error">エラーをコピー</string>
+    <string name="error_copied">エラーをクリップボードにコピーしました</string>
+    <string name="action_open_settings">設定を開く</string>
+
+    <!-- Fix Request -->
+    <string name="fix_request_label">修正するには、AIにこう頼んでください:</string>
+    <string name="fix_request_message">現在のAPIトークンに \'operator.read\' 権限を付与してください。</string>
+    <string name="action_ask_ai">AIに修正を依頼</string>
+
+    <!-- Agent -->
+    <string name="agent_default">デフォルト</string>
 </resources>

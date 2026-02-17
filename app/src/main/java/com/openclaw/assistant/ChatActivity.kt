@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -31,6 +32,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -100,8 +103,10 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val uiState by viewModel.uiState.collectAsState()
                 val allSessions by viewModel.allSessions.collectAsState()
                 val currentSessionId by viewModel.currentSessionId.collectAsState()
+                val prefillText = intent.getStringExtra("EXTRA_PREFILL_TEXT") ?: ""
                 
                 ChatScreen(
+                    initialText = prefillText,
                     uiState = uiState,
                     allSessions = allSessions,
                     currentSessionId = currentSessionId,
@@ -208,6 +213,7 @@ sealed interface ChatListItem {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
+    initialText: String = "",
     uiState: ChatUiState,
     allSessions: List<com.openclaw.assistant.data.local.entity.SessionEntity>,
     currentSessionId: String?,
@@ -223,7 +229,7 @@ fun ChatScreen(
     onDeleteSession: (String) -> Unit,
     onAgentSelected: (String?) -> Unit = {}
 ) {
-    var inputText by remember { mutableStateOf("") }
+    var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -620,15 +626,44 @@ fun AgentSelector(
     var expanded by remember { mutableStateOf(false) }
     val effectiveId = selectedAgentId ?: defaultAgentId
     val selectedAgent = agents.find { it.id == effectiveId }
-    val displayName = selectedAgent?.name
-        ?: if (effectiveId.isNotBlank() && effectiveId != "main") effectiveId
-        else stringResource(R.string.agent_selector)
+    
+    // Determine display name
+    val displayName = if (selectedAgent != null) {
+        selectedAgent.name
+    } else {
+        if (effectiveId == "main" || effectiveId.isBlank()) stringResource(R.string.agent_default)
+        else effectiveId
+    }
 
     Box {
-        AssistChip(
-            onClick = { if (agents.isNotEmpty()) expanded = true },
-            label = { Text(displayName, fontSize = 11.sp, maxLines = 1) }
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable { if (agents.isNotEmpty()) expanded = true }
+                .padding(vertical = 4.dp, horizontal = 4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.SmartToy,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         if (agents.isNotEmpty()) {
             DropdownMenu(
                 expanded = expanded,

@@ -83,6 +83,9 @@ class GatewayClient {
     private val _agentList = MutableStateFlow<AgentListResult?>(null)
     val agentList: StateFlow<AgentListResult?> = _agentList.asStateFlow()
 
+    private val _missingScopeError = MutableStateFlow<String?>(null)
+    val missingScopeError: StateFlow<String?> = _missingScopeError.asStateFlow()
+
     /** The main session key received from the server during connect. */
     @Volatile
     var mainSessionKey: String? = null
@@ -186,13 +189,29 @@ class GatewayClient {
     /**
      * Fetch the list of available agents from the gateway.
      */
+
     suspend fun getAgentList(): AgentListResult? {
-        return try {
-            val result = request("agents.list", null)
-            parseAgentListResult(result.payload).also { _agentList.value = it }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get agent list: ${e.message}")
-            null
+        Log.e(TAG, "Requesting agent list (agents.list)...")
+        val result = request("agents.list", null)
+        
+        if (!result.ok) {
+            val errorMsg = result.errorMessage ?: result.errorCode ?: "Unknown error"
+            Log.e(TAG, "Failed to get agent list: $errorMsg")
+
+            // Check for missing scope error
+            if (errorMsg.contains("missing scope", ignoreCase = true)) {
+                _missingScopeError.value = errorMsg
+            }
+
+            throw IllegalStateException(errorMsg)
+        }
+
+        // Clear error on success
+        _missingScopeError.value = null
+
+        return parseAgentListResult(result.payload).also { 
+            Log.e(TAG, "Agent list received: ${it?.agents?.size} agents")
+            _agentList.value = it 
         }
     }
 
@@ -250,7 +269,7 @@ class GatewayClient {
 
         val scheme = if (useTls) "wss" else "ws"
         val url = "$scheme://$host:$port"
-        Log.d(TAG, "Connecting to $url")
+        Log.e(TAG, "Connecting to $url")
 
         val request = Request.Builder().url(url).build()
         currentSocket = httpClient.newWebSocket(request, WsListener())
@@ -265,7 +284,7 @@ class GatewayClient {
         sendConnectRpc(token)
 
         _connectionState.value = ConnectionState.CONNECTED
-        Log.d(TAG, "Connected to $url, mainSessionKey=$mainSessionKey")
+        Log.e(TAG, "Connected to $url, mainSessionKey=$mainSessionKey")
 
         // Auto-fetch agent list after successful connect
         scope.launch {
@@ -524,7 +543,7 @@ class GatewayClient {
 
     private inner class WsListener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            Log.d(TAG, "WebSocket opened")
+            Log.e(TAG, "WebSocket opened")
             // Don't complete connectDeferred here; wait for connect RPC response
             connectDeferred?.complete(Unit)
         }
