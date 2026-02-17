@@ -160,4 +160,10 @@
 
     <!-- Agent -->
     <string name="agent_default">デフォルト</string>
+
+    <!-- Pairing -->
+    <string name="pairing_required_title">デバイスのペアリングが必要です</string>
+    <string name="pairing_required_desc">このデバイスはまだサーバーで承認されていません。サーバーで以下のコマンドを実行して承認してください：</string>
+    <string name="pairing_copy_command">コマンドをコピー</string>
+    <string name="pairing_command_copied">コマンドをクリップボードにコピーしました</string>
 </resources>

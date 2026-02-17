@@ -1,5 +1,6 @@
 package com.openclaw.assistant.gateway
 
+import android.content.Context
 import android.util.Log
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
@@ -46,7 +47,7 @@ import kotlin.math.pow
  * - Gson instead of kotlinx.serialization
  * - Merged connection + chat control into a single class
  */
-class GatewayClient {
+class GatewayClient(context: android.content.Context) {
 
     companion object {
         private const val TAG = "GatewayClient"
@@ -54,9 +55,9 @@ class GatewayClient {
         @Volatile
         private var instance: GatewayClient? = null
 
-        fun getInstance(): GatewayClient {
+        fun getInstance(context: android.content.Context? = null): GatewayClient {
             return instance ?: synchronized(this) {
-                instance ?: GatewayClient().also { instance = it }
+                instance ?: GatewayClient(context!!).also { instance = it }
             }
         }
     }
@@ -65,6 +66,8 @@ class GatewayClient {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<RpcResult>>()
+    
+    private val deviceIdentity = DeviceIdentity(context)
 
     // --- Public state ---
 
@@ -86,10 +89,16 @@ class GatewayClient {
     private val _missingScopeError = MutableStateFlow<String?>(null)
     val missingScopeError: StateFlow<String?> = _missingScopeError.asStateFlow()
 
+    private val _isPairingRequired = MutableStateFlow(false)
+    val isPairingRequired: StateFlow<Boolean> = _isPairingRequired.asStateFlow()
+
     /** The main session key received from the server during connect. */
     @Volatile
     var mainSessionKey: String? = null
         private set
+
+    val deviceId: String?
+        get() = deviceIdentity.deviceId
 
     // --- Internal connection state ---
 
@@ -327,12 +336,58 @@ class GatewayClient {
                 }
                 add("auth", authObj)
             }
+            
+            // Add device auth if available
+            if (deviceIdentity.deviceId != null && deviceIdentity.publicKeyBase64Url != null) {
+                val signedAtMs = System.currentTimeMillis()
+                val role = "operator" // Default role
+                val scopes = listOf("operator.admin") // Default scopes requested
+                
+                val payload = deviceIdentity.buildAuthPayload(
+                    clientId = "openclaw-android",
+                    clientMode = "ui",
+                    role = role,
+                    scopes = scopes,
+                    signedAtMs = signedAtMs,
+                    token = token,
+                    nonce = nonce
+                )
+                
+                val signature = deviceIdentity.sign(payload)
+                
+                if (signature != null) {
+                    val deviceObj = JsonObject().apply {
+                        addProperty("id", deviceIdentity.deviceId)
+                        addProperty("publicKey", deviceIdentity.publicKeyBase64Url)
+                        addProperty("signature", signature)
+                        addProperty("signedAt", signedAtMs)
+                        if (nonce != null) addProperty("nonce", nonce)
+                    }
+                    add("device", deviceObj)
+                    
+                    // Also explicitly request the scopes in the top level
+                    val scopesArray = JsonArray()
+                    scopes.forEach { scopesArray.add(it) }
+                    add("scopes", scopesArray)
+                    addProperty("role", role)
+                }
+            }
         }
 
         val result = request("connect", params, timeoutMs = 8_000)
         if (!result.ok) {
-            throw IllegalStateException(result.errorMessage ?: "connect failed (${result.errorCode})")
+            val errorCode = result.errorCode
+            val errorMsg = result.errorMessage ?: "connect failed"
+            
+            if (errorCode == "NOT_PAIRED" || errorMsg.contains("pairing required", ignoreCase = true)) {
+                _isPairingRequired.value = true
+            }
+            
+            throw IllegalStateException("$errorMsg ($errorCode)")
         }
+
+        // Clear pairing error on success
+        _isPairingRequired.value = false
 
         // Extract mainSessionKey from response
         result.payload?.let { payload ->

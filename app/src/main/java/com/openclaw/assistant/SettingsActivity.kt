@@ -90,7 +90,9 @@ fun SettingsScreen(
     // Agent list from gateway
     val gatewayClient = remember { GatewayClient.getInstance() }
     val agentListState by gatewayClient.agentList.collectAsState()
-    val availableAgents = agentListState?.agents ?: emptyList()
+    val availableAgents = remember(agentListState) { 
+        agentListState?.agents?.distinctBy { it.id } ?: emptyList() 
+    }
     var isFetchingAgents by remember { mutableStateOf(false) }
     var showAgentMenu by remember { mutableStateOf(false) }
 
@@ -228,78 +230,107 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // Default Agent
-                    if (availableAgents.isNotEmpty()) {
-                        // Dropdown when agents are loaded
-                        ExposedDropdownMenuBox(
-                            expanded = showAgentMenu,
-                            onExpandedChange = { showAgentMenu = it }
-                        ) {
-                            val agentLabel = availableAgents.find { it.id == defaultAgentId }?.name ?: defaultAgentId
-                            OutlinedTextField(
-                                value = agentLabel,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(stringResource(R.string.default_agent_label)) },
-                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showAgentMenu) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor()
-                            )
-                            ExposedDropdownMenu(
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        if (availableAgents.isNotEmpty()) {
+                            // Dropdown when agents are loaded
+                            ExposedDropdownMenuBox(
                                 expanded = showAgentMenu,
-                                onDismissRequest = { showAgentMenu = false }
+                                onExpandedChange = { showAgentMenu = it }
                             ) {
-                                availableAgents.forEach { agent ->
-                                    DropdownMenuItem(
-                                        text = { Text(agent.name) },
-                                        onClick = {
-                                            defaultAgentId = agent.id
-                                            showAgentMenu = false
-                                        },
-                                        leadingIcon = {
-                                            if (defaultAgentId == agent.id) {
-                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        // Text field fallback before connection
-                        OutlinedTextField(
-                            value = defaultAgentId,
-                            onValueChange = { defaultAgentId = it },
-                            label = { Text(stringResource(R.string.default_agent_label)) },
-                            placeholder = { Text(stringResource(R.string.default_agent_hint)) },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                            trailingIcon = {
-                                if (isFetchingAgents) {
-                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                } else {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            isFetchingAgents = true
-                                            Log.e("SettingsActivity", "Manual agent refresh clicked")
-                                            if (gatewayClient.isConnected()) {
-                                                try {
-                                                    gatewayClient.getAgentList()
-                                                } catch (e: Exception) {
-                                                    Log.e("SettingsActivity", "Manual fetch failed: ${e.message}")
-                                                    Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
+                                val agentLabel = availableAgents.find { it.id == defaultAgentId }?.name ?: defaultAgentId
+                                OutlinedTextField(
+                                    value = agentLabel,
+                                    onValueChange = { defaultAgentId = it },
+                                    label = { Text(stringResource(R.string.default_agent_label)) },
+                                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (isFetchingAgents) {
+                                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                             } else {
-                                                Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                IconButton(onClick = {
+                                                    scope.launch {
+                                                        isFetchingAgents = true
+                                                        if (gatewayClient.isConnected()) {
+                                                            try {
+                                                                gatewayClient.getAgentList()
+                                                            } catch (e: Exception) {
+                                                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            }
+                                                        } else {
+                                                            Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        isFetchingAgents = false
+                                                    }
+                                                }) {
+                                                    Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
+                                                }
                                             }
-                                            isFetchingAgents = false
+                                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = showAgentMenu)
                                         }
-                                    }) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
+                                    },
+                                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = showAgentMenu,
+                                    onDismissRequest = { showAgentMenu = false }
+                                ) {
+                                    availableAgents.forEach { agent ->
+                                        DropdownMenuItem(
+                                            text = { Text(agent.name) },
+                                            onClick = {
+                                                defaultAgentId = agent.id
+                                                showAgentMenu = false
+                                            },
+                                            leadingIcon = {
+                                                if (defaultAgentId == agent.id) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
                                     }
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+                            }
+                        } else {
+                            // Text field fallback before connection or if no agents found
+                            OutlinedTextField(
+                                value = defaultAgentId,
+                                onValueChange = { defaultAgentId = it },
+                                label = { Text(stringResource(R.string.default_agent_label)) },
+                                placeholder = { Text(stringResource(R.string.default_agent_hint)) },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                trailingIcon = {
+                                    if (isFetchingAgents) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                isFetchingAgents = true
+                                                if (gatewayClient.isConnected()) {
+                                                    try {
+                                                        gatewayClient.getAgentList()
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                } else {
+                                                    Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                }
+                                                isFetchingAgents = false
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))

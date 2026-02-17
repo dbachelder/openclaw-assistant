@@ -46,7 +46,9 @@ data class ChatUiState(
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val availableAgents: List<AgentInfo> = emptyList(),
     val selectedAgentId: String? = null, // null = use default from settings
-    val defaultAgentId: String = "main" // From settings, for display when agent list unavailable
+    val defaultAgentId: String = "main", // From settings, for display when agent list unavailable
+    val isPairingRequired: Boolean = false,
+    val deviceId: String? = null
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -137,6 +139,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             gatewayClient.connectionState.collect { state ->
                 _uiState.update { it.copy(connectionState = state) }
+            }
+        }
+
+        // Observe pairing required state
+        viewModelScope.launch {
+            gatewayClient.isPairingRequired.collect { required ->
+                _uiState.update { it.copy(isPairingRequired = required, deviceId = gatewayClient.deviceId) }
             }
         }
 

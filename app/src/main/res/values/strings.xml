@@ -191,4 +191,10 @@
     <string name="fix_request_label">To fix, ask your AI:</string>
     <string name="fix_request_message">Please grant \'operator.read\' scope to my current API token.</string>
     <string name="action_ask_ai">Ask AI to Fix</string>
+
+    <!-- Pairing -->
+    <string name="pairing_required_title">Device Pairing Required</string>
+    <string name="pairing_required_desc">Your device is not yet approved by the server. Please run the following command on your server to approve it:</string>
+    <string name="pairing_copy_command">Copy Command</string>
+    <string name="pairing_command_copied">Command copied to clipboard</string>
 </resources>
