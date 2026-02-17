@@ -1,5 +1,6 @@
 package com.openclaw.assistant.api
 
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -59,7 +60,7 @@ class OpenClawClient {
                 .addHeader("Accept", "application/json")
 
             if (!authToken.isNullOrBlank()) {
-                requestBuilder.addHeader("Authorization", "Bearer $authToken")
+                requestBuilder.addHeader("Authorization", "Bearer ${authToken.trim()}")
             }
 
             if (!agentId.isNullOrBlank()) {
@@ -87,7 +88,12 @@ class OpenClawClient {
                 val text = extractResponseText(responseBody)
                 Result.success(OpenClawResponse(response = text ?: responseBody))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            if (!isTransientNetworkError(e)) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
             Result.failure(e)
         }
     }
@@ -106,7 +112,7 @@ class OpenClawClient {
                 .head()
 
             if (!authToken.isNullOrBlank()) {
-                requestBuilder.addHeader("Authorization", "Bearer $authToken")
+                requestBuilder.addHeader("Authorization", "Bearer ${authToken.trim()}")
             }
 
             var request = requestBuilder.build()
@@ -147,7 +153,7 @@ class OpenClawClient {
                 .addHeader("Content-Type", "application/json")
 
             if (!authToken.isNullOrBlank()) {
-                requestBuilder.addHeader("Authorization", "Bearer $authToken")
+                requestBuilder.addHeader("Authorization", "Bearer ${authToken.trim()}")
             }
 
             request = requestBuilder.build()
@@ -163,6 +169,15 @@ class OpenClawClient {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun isTransientNetworkError(e: Throwable): Boolean {
+        return e is java.net.SocketTimeoutException ||
+                e is java.net.SocketException ||
+                e is java.net.ConnectException ||
+                e is java.io.EOFException ||
+                e is java.net.UnknownHostException ||
+                (e.cause != null && isTransientNetworkError(e.cause!!))
     }
 
     /**

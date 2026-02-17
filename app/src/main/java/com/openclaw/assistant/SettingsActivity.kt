@@ -127,7 +127,7 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             settings.webhookUrl = webhookUrl
-                            settings.authToken = authToken
+                            settings.authToken = authToken.trim()
                             settings.defaultAgentId = defaultAgentId
                             settings.connectionMode = connectionMode
                             settings.gatewayPort = gatewayPort.toIntOrNull() ?: 18789
@@ -193,7 +193,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = authToken,
                         onValueChange = { 
-                            authToken = it
+                            authToken = it.trim()
                             testResult = null
                         },
                         label = { Text(stringResource(R.string.auth_token_label)) },
@@ -342,12 +342,12 @@ fun SettingsScreen(
                                     val testUrl = webhookUrl.trimEnd('/').let { url ->
                                         if (url.contains("/v1/")) url else "$url/v1/chat/completions"
                                     }
-                                    val result = apiClient.testConnection(testUrl, authToken)
+                                    val result = apiClient.testConnection(testUrl, authToken.trim())
                                     result.fold(
                                         onSuccess = {
                                             testResult = TestResult(success = true, message = context.getString(R.string.connected))
                                             settings.webhookUrl = webhookUrl
-                                            settings.authToken = authToken
+                                            settings.authToken = authToken.trim()
                                             settings.isVerified = true
 
                                             // Fetch agent list via WebSocket

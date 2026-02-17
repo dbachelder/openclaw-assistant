@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.openclaw.assistant.MainActivity
 import com.openclaw.assistant.R
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.openclaw.assistant.data.SettingsRepository
 import kotlinx.coroutines.*
 import org.vosk.Model
@@ -73,6 +74,8 @@ class HotwordService : Service(), VoskRecognitionListener {
     private var audioRetryCount = 0
     private val MAX_AUDIO_RETRIES = 5
     private var watchdogJob: Job? = null
+    private var errorRecoveryJob: Job? = null
+    private var retryJob: Job? = null
     private val SESSION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
 
     private val controlReceiver = object : android.content.BroadcastReceiver() {
@@ -120,10 +123,18 @@ class HotwordService : Service(), VoskRecognitionListener {
             }
             if (isVoskCrash) {
                 Log.e(TAG, "Caught uncaught Vosk exception on thread ${thread.name}", throwable)
-                speechService = null
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    if (!isSessionActive) {
-                        resumeHotwordDetection()
+                if (throwable is UnsatisfiedLinkError || throwable.cause is UnsatisfiedLinkError) {
+                    FirebaseCrashlytics.getInstance().recordException(throwable)
+                    getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+                        .edit().putBoolean("vosk_unsupported", true).apply()
+                    // Don't resume - device doesn't support Vosk
+                } else {
+                    FirebaseCrashlytics.getInstance().recordException(throwable)
+                    speechService = null
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (!isSessionActive) {
+                            resumeHotwordDetection()
+                        }
                     }
                 }
             } else {
@@ -208,6 +219,13 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     private fun initVosk() {
+        // Skip if Vosk is known to be unsupported on this device
+        val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("vosk_unsupported", false)) {
+            Log.w(TAG, "Vosk is unsupported on this device. Skipping init.")
+            return
+        }
+
         scope.launch(Dispatchers.IO) {
             try {
                 val modelPath = copyAssets()
@@ -217,8 +235,15 @@ class HotwordService : Service(), VoskRecognitionListener {
                         if (!isSessionActive) startHotwordListening()
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Vosk native library not supported on this device", e)
+                FirebaseCrashlytics.getInstance().recordException(e)
+                prefs.edit().putBoolean("vosk_unsupported", true).apply()
             } catch (e: Exception) {
                 Log.e(TAG, "Init error", e)
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
     }
@@ -300,6 +325,17 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun startHotwordListening() {
         if (model == null || isSessionActive) return
 
+        // Clean up any existing speechService to prevent resource leak
+        speechService?.let {
+            try {
+                it.stop()
+                it.shutdown()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clean up existing speechService", e)
+            }
+            speechService = null
+        }
+
         // Verify RECORD_AUDIO permission before touching AudioRecord
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
@@ -365,7 +401,8 @@ class HotwordService : Service(), VoskRecognitionListener {
         audioRetryCount++
         val delayMs = (2000L * audioRetryCount).coerceAtMost(10000L)
         Log.w(TAG, "Scheduling audio retry #$audioRetryCount in ${delayMs}ms")
-        scope.launch {
+        retryJob?.cancel()
+        retryJob = scope.launch {
             delay(delayMs)
             if (!isSessionActive) {
                 startHotwordListening()
@@ -378,17 +415,22 @@ class HotwordService : Service(), VoskRecognitionListener {
     override fun onResult(hypothesis: String?) {
         if (isListeningForCommand || isSessionActive) return
         hypothesis?.let {
-            val json = JSONObject(it)
-            val text = json.optString("text", "")
-            
-            // Check against configured wake words
-            val wakeWords = settings.getWakeWords()
-            val detected = wakeWords.any { word -> text.contains(word) }
-            
-            if (detected) {
-                Log.e(TAG, "Hotword detected! Text: $text")
-                onHotwordDetected()
+            try {
+                val json = JSONObject(it)
+                val text = json.optString("text", "")
+
+                // Check against configured wake words
+                val wakeWords = settings.getWakeWords()
+                val detected = wakeWords.any { word -> text.contains(word) }
+
+                if (detected) {
+                    Log.e(TAG, "Hotword detected! Text: $text")
+                    onHotwordDetected()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse Vosk result: $it", e)
             }
+            Unit
         }
     }
 
@@ -399,7 +441,8 @@ class HotwordService : Service(), VoskRecognitionListener {
     override fun onError(exception: Exception?) {
         Log.e(TAG, "Vosk Error: " + exception?.message)
         if (isSessionActive) return
-        scope.launch {
+        errorRecoveryJob?.cancel()
+        errorRecoveryJob = scope.launch {
             delay(3000)
             if (!isSessionActive) resumeHotwordDetection()
         }

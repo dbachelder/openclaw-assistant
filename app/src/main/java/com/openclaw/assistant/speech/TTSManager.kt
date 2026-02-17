@@ -94,12 +94,33 @@ class TTSManager(private val context: Context) {
     }
 
     suspend fun speak(text: String): Boolean {
-        val result = withTimeoutOrNull(90_000L) {
+        // Query the engine's actual max input length instead of assuming 4000
+        val maxLen = TTSUtils.getMaxInputLength(tts)
+        val chunks = TTSUtils.splitTextForTTS(text, maxLen)
+        Log.d(TAG, "TTS splitting text (${text.length} chars) into ${chunks.size} chunks (maxLen=$maxLen)")
+
+        for ((index, chunk) in chunks.withIndex()) {
+            val success = speakSingleChunk(chunk, index == 0)
+            if (!success) {
+                Log.e(TAG, "TTS chunk $index failed, aborting remaining chunks")
+                return false
+            }
+        }
+        return true
+    }
+
+    private suspend fun speakSingleChunk(text: String, isFirst: Boolean): Boolean {
+        // Scale timeout based on text length (minimum 30s, ~15s per 1000 chars)
+        val timeoutMs = (30_000L + (text.length * 15L)).coerceAtMost(120_000L)
+        val result = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 val utteranceId = UUID.randomUUID().toString()
+                val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
                 val listener = object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {}
+                    override fun onStart(utteranceId: String?) {
+                        started.set(true)
+                    }
                     override fun onDone(utteranceId: String?) { if (continuation.isActive) continuation.resume(true) }
                     override fun onStop(utteranceId: String?, interrupted: Boolean) { if (continuation.isActive) continuation.resume(false) }
                     override fun onError(utteranceId: String?) { if (continuation.isActive) continuation.resume(false) }
@@ -108,14 +129,24 @@ class TTSManager(private val context: Context) {
                 if (isInitialized) {
                     TTSUtils.applyUserConfig(tts, settings.ttsSpeed)
                     tts?.setOnUtteranceProgressListener(listener)
-                    val speakResult = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                    val queueMode = if (isFirst) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                    val speakResult = tts?.speak(text, queueMode, null, utteranceId)
                     if (speakResult != TextToSpeech.SUCCESS) {
                         Log.e(TAG, "TTS speak failed immediately: $speakResult")
                         if (continuation.isActive) continuation.resume(false)
                     } else {
-                        // Polling fallback: check tts.isSpeaking() in case callback never fires
+                        // Polling fallback: only start polling AFTER onStart fires,
+                        // to avoid false-positive when engine hasn't begun speaking yet
                         CoroutineScope(Dispatchers.Main).launch {
-                            delay(2000)
+                            // Wait for onStart (up to 10s)
+                            var waitedMs = 0L
+                            while (!started.get() && continuation.isActive && waitedMs < 10_000L) {
+                                delay(200)
+                                waitedMs += 200
+                            }
+                            if (!started.get() || !continuation.isActive) return@launch
+                            // Now poll isSpeaking - only treat false as "done" after speech started
+                            delay(1000)
                             while (continuation.isActive) {
                                 val speaking = tts?.isSpeaking ?: false
                                 if (!speaking) {
@@ -130,10 +161,15 @@ class TTSManager(private val context: Context) {
 
                     continuation.invokeOnCancellation { tts?.stop() }
                 } else {
+                    // Queue this chunk to be spoken once TTS initialization completes.
+                    // Compose with existing pending to preserve chunk ordering.
+                    val existingPending = pendingSpeak
                     pendingSpeak = {
+                        existingPending?.invoke()
                         TTSUtils.applyUserConfig(tts, settings.ttsSpeed)
                         tts?.setOnUtteranceProgressListener(listener)
-                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                        val queueMode = if (isFirst) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                        tts?.speak(text, queueMode, null, utteranceId)
                     }
                     // Wait up to 5s for init
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -146,7 +182,7 @@ class TTSManager(private val context: Context) {
         }
 
         if (result == null) {
-            Log.w(TAG, "TTS timed out after 90s, forcing stop")
+            Log.w(TAG, "TTS chunk timed out, forcing stop")
             tts?.stop()
             return false
         }
