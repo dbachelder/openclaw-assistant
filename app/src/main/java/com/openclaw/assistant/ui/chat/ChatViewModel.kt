@@ -10,7 +10,6 @@ import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.gateway.AgentInfo
-import com.openclaw.assistant.gateway.ConnectionState
 import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.SpeechResult
@@ -38,12 +37,9 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isListening: Boolean = false,
     val isThinking: Boolean = false,
-    val isStreaming: Boolean = false,
     val isSpeaking: Boolean = false,
     val error: String? = null,
     val partialText: String = "", // For real-time speech transcription
-    val streamingContent: String? = null, // Real-time AI response text
-    val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val availableAgents: List<AgentInfo> = emptyList(),
     val selectedAgentId: String? = null, // null = use default from settings
     val defaultAgentId: String = "main", // From settings, for display when agent list unavailable
@@ -63,11 +59,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val speechManager = SpeechRecognizerManager(application)
     private val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
 
-    // WebSocket streaming state
-    private var currentRunId: String? = null
     private var thinkingSoundJob: Job? = null
-    private val accumulatedStreamText = StringBuilder()
-    @Volatile private var suppressWsEvents = false
 
     // WakeLock to keep CPU alive during voice interaction with screen off
     private var wakeLock: android.os.PowerManager.WakeLock? = null
@@ -135,13 +127,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe gateway connection state
-        viewModelScope.launch {
-            gatewayClient.connectionState.collect { state ->
-                _uiState.update { it.copy(connectionState = state) }
-            }
-        }
-
         // Observe pairing required state
         viewModelScope.launch {
             gatewayClient.isPairingRequired.collect { required ->
@@ -149,46 +134,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe chat events - only accumulate text, no DB save.
-        // Saving is handled by sendViaWebSocket when chat.send RPC returns.
-        // Skip in HTTP mode to avoid duplicate messages.
-        viewModelScope.launch {
-            gatewayClient.chatEvents.collect { event ->
-                if (suppressWsEvents || settings.connectionMode == "http") return@collect
-                when (event.state) {
-                    "final" -> onTurnFinal()
-                    "error" -> {
-                        stopThinkingSound()
-                        _uiState.update { it.copy(isThinking = false, error = event.errorMessage ?: "Chat failed") }
-                    }
-                    // "aborted" - no action needed, sendViaWebSocket handles it
-                }
-            }
-        }
-
-        // Observe agent events (streaming assistant text)
-        // Skip in HTTP mode to avoid duplicate messages.
-        viewModelScope.launch {
-            gatewayClient.agentEvents.collect { event ->
-                if (suppressWsEvents || settings.connectionMode == "http") return@collect
-                if (event.stream == "assistant" && !event.data?.text.isNullOrEmpty()) {
-                    val turnText = event.data?.text ?: ""
-                    val accText = accumulatedStreamText.toString()
-                    val displayText = if (accText.isEmpty() || turnText.startsWith(accText)) {
-                        turnText
-                    } else {
-                        "$accText\n\n$turnText"
-                    }
-                    // First streaming text arrives → stop thinking indicator
-                    if (_uiState.value.isThinking) {
-                        stopThinkingSound()
-                    }
-                    _uiState.update { it.copy(streamingContent = displayText, isStreaming = true, isThinking = false) }
-                }
-            }
-        }
-
-        // Observe agent list from gateway
+        // Observe agent list from gateway (fetched via WS)
         viewModelScope.launch {
             gatewayClient.agentList.collect { agentListResult ->
                 _uiState.update { it.copy(
@@ -208,9 +154,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connectGatewayIfNeeded() {
-        val connectionMode = settings.connectionMode
-        if (connectionMode == "http") return
-
         val baseUrl = settings.getBaseUrl()
         if (baseUrl.isBlank()) return
 
@@ -303,7 +246,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Ensure we have a session
         val sessionId = _currentSessionId.value ?: return
 
-        _uiState.update { it.copy(isThinking = true, streamingContent = null, isStreaming = false) }
+        _uiState.update { it.copy(isThinking = true) }
         if (lastInputWasVoice) {
             toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
         }
@@ -313,67 +256,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // Save User Message
                 chatRepository.addMessage(sessionId, text, isUser = true)
-
-                if (gatewayClient.isConnected() && settings.connectionMode != "http") {
-                    sendViaWebSocket(sessionId, text)
-                } else {
-                    sendViaHttp(sessionId, text)
-                }
+                sendViaHttp(sessionId, text)
             } catch (e: Exception) {
                 stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false, isStreaming = false, error = e.message) }
-            }
-        }
-    }
-
-    private suspend fun sendViaWebSocket(sessionId: String, text: String) {
-        try {
-            accumulatedStreamText.clear()
-            suppressWsEvents = false
-            val agentId = getEffectiveAgentId()
-            val sessionKey = if (agentId != null) {
-                "agent:$agentId:main"
-            } else {
-                gatewayClient.mainSessionKey ?: "main"
-            }
-            currentRunId = gatewayClient.sendChat(sessionKey, text)
-
-            // RPC succeeded - wait briefly for remaining streaming events
-            delay(500)
-
-            // Run is complete - save the full response as a single message
-            stopThinkingSound()
-            val finalText = accumulatedStreamText.toString().ifBlank {
-                _uiState.value.streamingContent
-            }
-            accumulatedStreamText.clear()
-            currentRunId = null
-            _uiState.update { it.copy(isThinking = false, isStreaming = false, streamingContent = null) }
-
-            if (!finalText.isNullOrBlank()) {
-                chatRepository.addMessage(sessionId, finalText, isUser = false)
-                afterResponseReceived(finalText)
-            }
-        } catch (e: Exception) {
-            // RPC failed or timed out
-            val partialText = accumulatedStreamText.toString().ifBlank {
-                _uiState.value.streamingContent
-            }
-            accumulatedStreamText.clear()
-            currentRunId = null
-
-            if (!partialText.isNullOrBlank()) {
-                // Save whatever was streamed before the failure
-                stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false, isStreaming = false, streamingContent = null) }
-                chatRepository.addMessage(sessionId, partialText, isUser = false)
-            } else {
-                // Nothing streamed - suppress WS events and fall back to HTTP
-                suppressWsEvents = true
-                _uiState.update { it.copy(isStreaming = false, streamingContent = null) }
-                Log.w(TAG, "WebSocket send failed, falling back to HTTP: ${e.message}")
-                sendViaHttp(sessionId, text)
-                suppressWsEvents = false
+                _uiState.update { it.copy(isThinking = false, error = e.message) }
             }
         }
     }
@@ -403,31 +289,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    /**
-     * Called on each "final" chat event (per-turn, not per-run).
-     * Only accumulates text - saving is handled by sendViaWebSocket when
-     * the chat.send RPC returns (which signals the entire run is complete).
-     */
-    private fun onTurnFinal() {
-        val currentText = _uiState.value.streamingContent ?: ""
-
-        // Accumulate text across turns (tool call turn + response turn, etc.)
-        if (currentText.isNotBlank()) {
-            val accText = accumulatedStreamText.toString()
-            if (accText.isEmpty() || currentText.startsWith(accText)) {
-                // Server accumulates across turns, or first turn
-                accumulatedStreamText.clear()
-                accumulatedStreamText.append(currentText)
-            } else {
-                // Per-turn text from server - append with separator
-                accumulatedStreamText.append("\n\n").append(currentText)
-                _uiState.update { it.copy(streamingContent = accumulatedStreamText.toString()) }
-            }
-        }
-
-        stopThinkingSound()
-    }
-
     private fun afterResponseReceived(responseText: String) {
         if (settings.ttsEnabled) {
             speak(responseText)
@@ -436,18 +297,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 delay(500)
                 startListening()
             }
-        }
-    }
-
-    fun stopGeneration() {
-        val agentId = getEffectiveAgentId()
-        val sessionKey = if (agentId != null) {
-            "agent:$agentId:main"
-        } else {
-            gatewayClient.mainSessionKey ?: "main"
-        }
-        viewModelScope.launch {
-            gatewayClient.abortChat(sessionKey, currentRunId)
         }
     }
 

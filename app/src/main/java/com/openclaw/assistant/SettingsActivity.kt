@@ -66,8 +66,6 @@ fun SettingsScreen(
     var webhookUrl by remember { mutableStateOf(settings.webhookUrl) }
     var authToken by remember { mutableStateOf(settings.authToken) }
     var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
-    var connectionMode by remember { mutableStateOf(settings.connectionMode) }
-    var gatewayPort by remember { mutableStateOf(settings.gatewayPort.toString()) }
     var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
     var ttsSpeed by remember { mutableStateOf(settings.ttsSpeed) }
     var continuousMode by remember { mutableStateOf(settings.continuousMode) }
@@ -78,7 +76,6 @@ fun SettingsScreen(
 
     var showAuthToken by remember { mutableStateOf(false) }
     var showWakeWordMenu by remember { mutableStateOf(false) }
-    var showConnectionModeMenu by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -146,8 +143,6 @@ fun SettingsScreen(
                             settings.webhookUrl = webhookUrl
                             settings.authToken = authToken.trim()
                             settings.defaultAgentId = defaultAgentId
-                            settings.connectionMode = connectionMode
-                            settings.gatewayPort = gatewayPort.toIntOrNull() ?: 18789
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
                             settings.ttsEngine = ttsEngine
@@ -335,66 +330,6 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Connection Mode
-                    ExposedDropdownMenuBox(
-                        expanded = showConnectionModeMenu,
-                        onExpandedChange = { showConnectionModeMenu = it }
-                    ) {
-                        val modeLabel = when (connectionMode) {
-                            "websocket" -> stringResource(R.string.connection_mode_websocket)
-                            "http" -> stringResource(R.string.connection_mode_http)
-                            else -> stringResource(R.string.connection_mode_auto)
-                        }
-                        OutlinedTextField(
-                            value = modeLabel,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.connection_mode)) },
-                            leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showConnectionModeMenu) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = showConnectionModeMenu,
-                            onDismissRequest = { showConnectionModeMenu = false }
-                        ) {
-                            listOf(
-                                "auto" to stringResource(R.string.connection_mode_auto),
-                                "websocket" to stringResource(R.string.connection_mode_websocket),
-                                "http" to stringResource(R.string.connection_mode_http)
-                            ).forEach { (value, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        connectionMode = value
-                                        showConnectionModeMenu = false
-                                    },
-                                    leadingIcon = {
-                                        if (connectionMode == value) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // Gateway Port (only for websocket/auto modes)
-                    if (connectionMode != "http") {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = gatewayPort,
-                            onValueChange = { gatewayPort = it.filter { c -> c.isDigit() } },
-                            label = { Text(stringResource(R.string.gateway_port)) },
-                            leadingIcon = { Icon(Icons.Default.Router, contentDescription = null) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     // Test Connection Button
                     Button(
                         onClick = {
@@ -426,7 +361,7 @@ fun SettingsScreen(
                                                     val port = if (useTls) {
                                                         if (parsedUrl.port > 0) parsedUrl.port else 443
                                                     } else {
-                                                        gatewayPort.toIntOrNull() ?: if (parsedUrl.port > 0) parsedUrl.port else 18789
+                                                        if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
                                                     }
                                                     val token = authToken.takeIf { t -> t.isNotBlank() }
 

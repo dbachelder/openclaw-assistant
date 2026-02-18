@@ -299,9 +299,9 @@ fun MainScreen(
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Auto-connect on launch if configured
+    // Auto-connect WS on launch for agent list and pairing detection
     LaunchedEffect(Unit) {
-        if (settings.isConfigured() && settings.connectionMode != "http") {
+        if (settings.isConfigured()) {
              val baseUrl = settings.getBaseUrl()
              if (baseUrl.isNotBlank()) {
                  try {

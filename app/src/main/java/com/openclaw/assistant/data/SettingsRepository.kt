@@ -110,12 +110,8 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_TTS_ENGINE, "") ?: ""
         set(value) = prefs.edit().putString(KEY_TTS_ENGINE, value).apply()
 
-    // Connection Mode: "auto" | "websocket" | "http"
-    var connectionMode: String
-        get() = prefs.getString(KEY_CONNECTION_MODE, "http") ?: "http"
-        set(value) = prefs.edit().putString(KEY_CONNECTION_MODE, value).apply()
+    // Gateway Port for WebSocket agent list connection (default 18789)
 
-    // Gateway Port for WebSocket (default 18789)
     var gatewayPort: Int
         get() = prefs.getInt(KEY_GATEWAY_PORT, 18789)
         set(value) = prefs.edit().putInt(KEY_GATEWAY_PORT, value).apply()
@@ -189,7 +185,6 @@ class SettingsRepository(context: Context) {
         private const val KEY_CONTINUOUS_MODE = "continuous_mode"
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_ENGINE = "tts_engine"
-        private const val KEY_CONNECTION_MODE = "connection_mode"
         private const val KEY_GATEWAY_PORT = "gateway_port"
         private const val KEY_DEFAULT_AGENT_ID = "default_agent_id"
         private const val KEY_SPEECH_SILENCE_TIMEOUT = "speech_silence_timeout"
