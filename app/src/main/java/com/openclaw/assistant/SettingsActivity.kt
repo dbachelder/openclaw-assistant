@@ -121,26 +121,25 @@ fun SettingsScreen(
         Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
     }
 
-    // Speech recognition language options (BCP-47 tags)
-    val speechLanguageOptions = listOf(
-        "" to stringResource(R.string.speech_language_system_default),
-        "en-US" to "English (US)",
-        "en-GB" to "English (UK)",
-        "ja-JP" to "日本語",
-        "it-IT" to "Italiano",
-        "fr-FR" to "Français",
-        "de-DE" to "Deutsch",
-        "es-ES" to "Español",
-        "pt-BR" to "Português (Brasil)",
-        "ko-KR" to "한국어",
-        "zh-CN" to "中文 (简体)",
-        "zh-TW" to "中文 (繁體)",
-        "ar-SA" to "العربية",
-        "hi-IN" to "हिन्दी",
-        "ru-RU" to "Русский",
-        "th-TH" to "ไทย",
-        "vi-VN" to "Tiếng Việt"
-    )
+    // Speech recognition language options - loaded dynamically from device
+    var speechLanguageOptions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var isLoadingLanguages by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        isLoadingLanguages = true
+        val deviceLanguages = com.openclaw.assistant.speech.SpeechLanguageUtils
+            .getAvailableLanguages(context)
+
+        speechLanguageOptions = buildList {
+            add("" to context.getString(R.string.speech_language_system_default))
+            if (deviceLanguages != null) {
+                addAll(deviceLanguages.map { it.tag to it.displayName })
+            } else {
+                addAll(FALLBACK_SPEECH_LANGUAGES)
+            }
+        }
+        isLoadingLanguages = false
+    }
 
     // Wake word options
     val wakeWordOptions = listOf(
@@ -644,43 +643,59 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        ExposedDropdownMenuBox(
-                            expanded = showLanguageMenu,
-                            onExpandedChange = { showLanguageMenu = it }
-                        ) {
-                            val currentLabel = if (speechLanguage.isEmpty()) {
-                                stringResource(R.string.speech_language_system_default)
-                            } else {
-                                speechLanguageOptions.find { it.first == speechLanguage }?.second
-                                    ?: speechLanguage
-                            }
-
+                        if (isLoadingLanguages) {
                             OutlinedTextField(
-                                value = currentLabel,
+                                value = stringResource(R.string.speech_language_loading),
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text(stringResource(R.string.speech_language_label)) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor()
-                            )
-
-                            ExposedDropdownMenu(
-                                expanded = showLanguageMenu,
-                                onDismissRequest = { showLanguageMenu = false }
-                            ) {
-                                speechLanguageOptions.forEach { (tag, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            speechLanguage = tag
-                                            showLanguageMenu = false
-                                        },
-                                        leadingIcon = {
-                                            if (speechLanguage == tag) {
-                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
+                                trailingIcon = {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
                                     )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            ExposedDropdownMenuBox(
+                                expanded = showLanguageMenu,
+                                onExpandedChange = { showLanguageMenu = it }
+                            ) {
+                                val currentLabel = if (speechLanguage.isEmpty()) {
+                                    stringResource(R.string.speech_language_system_default)
+                                } else {
+                                    speechLanguageOptions.find { it.first == speechLanguage }?.second
+                                        ?: speechLanguage
+                                }
+
+                                OutlinedTextField(
+                                    value = currentLabel,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text(stringResource(R.string.speech_language_label)) },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
+                                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                                )
+
+                                ExposedDropdownMenu(
+                                    expanded = showLanguageMenu,
+                                    onDismissRequest = { showLanguageMenu = false }
+                                ) {
+                                    speechLanguageOptions.forEach { (tag, label) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                speechLanguage = tag
+                                                showLanguageMenu = false
+                                            },
+                                            leadingIcon = {
+                                                if (speechLanguage == tag) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -782,4 +797,24 @@ fun SettingsScreen(
 data class TestResult(
     val success: Boolean,
     val message: String
+)
+
+// Fallback language list used when device query fails
+private val FALLBACK_SPEECH_LANGUAGES = listOf(
+    "en-US" to "English (US)",
+    "en-GB" to "English (UK)",
+    "ja-JP" to "日本語",
+    "it-IT" to "Italiano",
+    "fr-FR" to "Français",
+    "de-DE" to "Deutsch",
+    "es-ES" to "Español",
+    "pt-BR" to "Português (Brasil)",
+    "ko-KR" to "한국어",
+    "zh-CN" to "中文 (简体)",
+    "zh-TW" to "中文 (繁體)",
+    "ar-SA" to "العربية",
+    "hi-IN" to "हिन्दी",
+    "ru-RU" to "Русский",
+    "th-TH" to "ไทย",
+    "vi-VN" to "Tiếng Việt"
 )
