@@ -108,6 +108,9 @@
     <string name="auto_start_mic">Auto-start mic after AI speaks</string>
     <string name="speech_silence_timeout">Silence Timeout</string>
     <string name="speech_silence_timeout_desc">Wait time after speech pause</string>
+    <string name="speech_language_label">Speech Language</string>
+    <string name="speech_language_desc">Language for speech recognition and TTS</string>
+    <string name="speech_language_system_default">System Default</string>
     <string name="thinking_sound">Thinking Sound</string>
     <string name="thinking_sound_desc">Play sound while AI is thinking</string>
     <string name="activation_phrase">Activation Phrase</string>

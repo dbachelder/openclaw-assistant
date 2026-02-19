@@ -72,10 +72,12 @@ fun SettingsScreen(
     var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
     var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
     var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
+    var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
 
     var showAuthToken by remember { mutableStateOf(false) }
     var showWakeWordMenu by remember { mutableStateOf(false) }
+    var showLanguageMenu by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -119,6 +121,27 @@ fun SettingsScreen(
         Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
     }
 
+    // Speech recognition language options (BCP-47 tags)
+    val speechLanguageOptions = listOf(
+        "" to stringResource(R.string.speech_language_system_default),
+        "en-US" to "English (US)",
+        "en-GB" to "English (UK)",
+        "ja-JP" to "日本語",
+        "it-IT" to "Italiano",
+        "fr-FR" to "Français",
+        "de-DE" to "Deutsch",
+        "es-ES" to "Español",
+        "pt-BR" to "Português (Brasil)",
+        "ko-KR" to "한국어",
+        "zh-CN" to "中文 (简体)",
+        "zh-TW" to "中文 (繁體)",
+        "ar-SA" to "العربية",
+        "hi-IN" to "हिन्दी",
+        "ru-RU" to "Русский",
+        "th-TH" to "ไทย",
+        "vi-VN" to "Tiếng Việt"
+    )
+
     // Wake word options
     val wakeWordOptions = listOf(
         SettingsRepository.WAKE_WORD_OPEN_CLAW to stringResource(R.string.wake_word_openclaw),
@@ -150,6 +173,7 @@ fun SettingsScreen(
                             settings.wakeWordPreset = wakeWordPreset
                             settings.customWakeWord = customWakeWord
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
+                            settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
                             onSave()
                         },
@@ -603,6 +627,64 @@ fun SettingsScreen(
                         steps = 4,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
+
+                    // Speech recognition language
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            stringResource(R.string.speech_language_label),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            stringResource(R.string.speech_language_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        ExposedDropdownMenuBox(
+                            expanded = showLanguageMenu,
+                            onExpandedChange = { showLanguageMenu = it }
+                        ) {
+                            val currentLabel = if (speechLanguage.isEmpty()) {
+                                stringResource(R.string.speech_language_system_default)
+                            } else {
+                                speechLanguageOptions.find { it.first == speechLanguage }?.second
+                                    ?: speechLanguage
+                            }
+
+                            OutlinedTextField(
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.speech_language_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+
+                            ExposedDropdownMenu(
+                                expanded = showLanguageMenu,
+                                onDismissRequest = { showLanguageMenu = false }
+                            ) {
+                                speechLanguageOptions.forEach { (tag, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            speechLanguage = tag
+                                            showLanguageMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (speechLanguage == tag) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
 
