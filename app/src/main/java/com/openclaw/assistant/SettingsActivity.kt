@@ -470,6 +470,91 @@ fun SettingsScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
+            // --- Speech Language card ---
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.speech_language_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (isLoadingLanguages) {
+                        OutlinedTextField(
+                            value = stringResource(R.string.speech_language_loading),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.speech_language_label)) },
+                            trailingIcon = {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        ExposedDropdownMenuBox(
+                            expanded = showLanguageMenu,
+                            onExpandedChange = { showLanguageMenu = it }
+                        ) {
+                            val currentLabel = if (speechLanguage.isEmpty()) {
+                                stringResource(R.string.speech_language_system_default)
+                            } else {
+                                speechLanguageOptions.find { it.first == speechLanguage }?.second
+                                    ?: speechLanguage
+                            }
+
+                            OutlinedTextField(
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.speech_language_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+
+                            ExposedDropdownMenu(
+                                expanded = showLanguageMenu,
+                                onDismissRequest = { showLanguageMenu = false }
+                            ) {
+                                speechLanguageOptions.forEach { (tag, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            speechLanguage = tag
+                                            showLanguageMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (speechLanguage == tag) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // --- Voice Output card ---
+            Text(
+                text = stringResource(R.string.voice_output),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -483,8 +568,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.voice_output), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.read_ai_responses), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(stringResource(R.string.read_ai_responses), style = MaterialTheme.typography.bodyLarge)
                         }
                         Switch(checked = ttsEnabled, onCheckedChange = { ttsEnabled = it })
                     }
@@ -492,102 +576,127 @@ fun SettingsScreen(
                     if (ttsEnabled) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
 
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            // TTS Engine Selection
-                            ExposedDropdownMenuBox(
+                        // TTS Engine Selection
+                        ExposedDropdownMenuBox(
+                            expanded = showEngineMenu,
+                            onExpandedChange = { showEngineMenu = it }
+                        ) {
+                            val currentLabel = if (ttsEngine.isEmpty()) {
+                                stringResource(R.string.tts_engine_auto)
+                            } else {
+                                availableEngines.find { it.name == ttsEngine }?.label ?: ttsEngine
+                            }
+
+                            OutlinedTextField(
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.tts_engine_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showEngineMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+
+                            ExposedDropdownMenu(
                                 expanded = showEngineMenu,
-                                onExpandedChange = { showEngineMenu = it }
+                                onDismissRequest = { showEngineMenu = false }
                             ) {
-                                val currentLabel = if (ttsEngine.isEmpty()) {
-                                    stringResource(R.string.tts_engine_auto)
-                                } else {
-                                    availableEngines.find { it.name == ttsEngine }?.label ?: ttsEngine
-                                }
-                                
-                                OutlinedTextField(
-                                    value = currentLabel,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(R.string.tts_engine_label)) },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showEngineMenu) },
-                                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.tts_engine_auto)) },
+                                    onClick = {
+                                        ttsEngine = ""
+                                        showEngineMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (ttsEngine.isEmpty()) {
+                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
                                 )
-                                
-                                ExposedDropdownMenu(
-                                    expanded = showEngineMenu,
-                                    onDismissRequest = { showEngineMenu = false }
-                                ) {
-                                    // Auto option
+
+                                availableEngines.forEach { engine ->
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.tts_engine_auto)) },
+                                        text = { Text(engine.label) },
                                         onClick = {
-                                            ttsEngine = ""
+                                            ttsEngine = engine.name
                                             showEngineMenu = false
                                         },
                                         leadingIcon = {
-                                            if (ttsEngine.isEmpty()) {
+                                            if (ttsEngine == engine.name) {
                                                 Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                             }
                                         }
                                     )
-                                    
-                                    availableEngines.forEach { engine ->
-                                        DropdownMenuItem(
-                                            text = { Text(engine.label) },
-                                            onClick = {
-                                                ttsEngine = engine.name
-                                                showEngineMenu = false
-                                            },
-                                            leadingIcon = {
-                                                if (ttsEngine == engine.name) {
-                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
-                                        )
-                                    }
                                 }
-                            }
-
-
-
-                            // Show Speed setting ONLY if Google TTS is selected (or Auto resolving to Google)
-                            val effectiveEngine = if (ttsEngine.isEmpty()) {
-                                com.openclaw.assistant.speech.TTSEngineUtils.getDefaultEngine(context)
-                            } else {
-                                ttsEngine
-                            }
-                            
-                            val isGoogleTTS = effectiveEngine == SettingsRepository.GOOGLE_TTS_PACKAGE
-
-                            if (isGoogleTTS) {
-                                Spacer(modifier = Modifier.height(16.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(stringResource(R.string.voice_speed), style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        text = "%.1fx".format(ttsSpeed),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                
-                                Slider(
-                                    value = ttsSpeed,
-                                    onValueChange = { ttsSpeed = it },
-                                    valueRange = 0.5f..3.0f,
-                                    steps = 24, // Steps of 0.1
-                                    modifier = Modifier.fillMaxWidth()
-                                )
                             }
                         }
+
+                        // Voice Speed (only if Google TTS)
+                        val effectiveEngine = if (ttsEngine.isEmpty()) {
+                            com.openclaw.assistant.speech.TTSEngineUtils.getDefaultEngine(context)
+                        } else {
+                            ttsEngine
+                        }
+                        val isGoogleTTS = effectiveEngine == SettingsRepository.GOOGLE_TTS_PACKAGE
+
+                        if (isGoogleTTS) {
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(stringResource(R.string.voice_speed), style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "%.1fx".format(ttsSpeed),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Slider(
+                                value = ttsSpeed,
+                                onValueChange = { ttsSpeed = it },
+                                valueRange = 0.5f..3.0f,
+                                steps = 24,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
-                    
+
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-                    
+
+                    // Thinking sound
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.thinking_sound), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.thinking_sound_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Switch(checked = thinkingSoundEnabled, onCheckedChange = { thinkingSoundEnabled = it })
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // --- Conversation card ---
+            Text(
+                text = stringResource(R.string.conversation_section),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -626,94 +735,6 @@ fun SettingsScreen(
                         steps = 4,
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
-                    // Speech recognition language
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            stringResource(R.string.speech_language_label),
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            stringResource(R.string.speech_language_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        if (isLoadingLanguages) {
-                            OutlinedTextField(
-                                value = stringResource(R.string.speech_language_loading),
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(stringResource(R.string.speech_language_label)) },
-                                trailingIcon = {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        } else {
-                            ExposedDropdownMenuBox(
-                                expanded = showLanguageMenu,
-                                onExpandedChange = { showLanguageMenu = it }
-                            ) {
-                                val currentLabel = if (speechLanguage.isEmpty()) {
-                                    stringResource(R.string.speech_language_system_default)
-                                } else {
-                                    speechLanguageOptions.find { it.first == speechLanguage }?.second
-                                        ?: speechLanguage
-                                }
-
-                                OutlinedTextField(
-                                    value = currentLabel,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(R.string.speech_language_label)) },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
-                                    modifier = Modifier.fillMaxWidth().menuAnchor()
-                                )
-
-                                ExposedDropdownMenu(
-                                    expanded = showLanguageMenu,
-                                    onDismissRequest = { showLanguageMenu = false }
-                                ) {
-                                    speechLanguageOptions.forEach { (tag, label) ->
-                                        DropdownMenuItem(
-                                            text = { Text(label) },
-                                            onClick = {
-                                                speechLanguage = tag
-                                                showLanguageMenu = false
-                                            },
-                                            leadingIcon = {
-                                                if (speechLanguage == tag) {
-                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
-                    // Thinking sound
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.thinking_sound), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.thinking_sound_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(checked = thinkingSoundEnabled, onCheckedChange = { thinkingSoundEnabled = it })
-                    }
                 }
             }
 
