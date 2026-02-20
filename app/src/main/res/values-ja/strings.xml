@@ -135,6 +135,8 @@
     <string name="conversations_title">会話</string>
     <string name="new_chat">新規チャット</string>
     <string name="delete">削除</string>
+    <string name="attach_file">ファイルを添付</string>
+    <string name="clear_attachment">添付を解除</string>
     <string name="menu">メニュー</string>
     <string name="back">戻る</string>
 

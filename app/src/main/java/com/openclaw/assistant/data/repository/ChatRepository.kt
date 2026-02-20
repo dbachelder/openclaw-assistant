@@ -45,7 +45,13 @@ class ChatRepository private constructor(context: Context) {
         return chatDao.getMessagesForSession(sessionId)
     }
 
-    suspend fun addMessage(sessionId: String, text: String, isUser: Boolean) {
+    suspend fun addMessage(
+        sessionId: String,
+        text: String,
+        isUser: Boolean,
+        attachmentPath: String? = null,
+        attachmentType: String? = null
+    ) {
         // Ensure session exists (simple check or upsert could happen here, but we rely on createSession called first usually)
         // If session doesn't exist, FK constraint fails. 
         // For robustness, we could check if session exists, if not create it? 
@@ -59,7 +65,9 @@ class ChatRepository private constructor(context: Context) {
         val message = MessageEntity(
             sessionId = sessionId,
             content = text,
-            isUser = isUser
+            isUser = isUser,
+            attachmentPath = attachmentPath,
+            attachmentType = attachmentType
         )
         chatDao.insertMessage(message)
         

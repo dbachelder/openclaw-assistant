@@ -24,5 +24,7 @@ data class MessageEntity(
     val sessionId: String,
     val content: String,
     val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val attachmentPath: String? = null,
+    val attachmentType: String? = null
 )

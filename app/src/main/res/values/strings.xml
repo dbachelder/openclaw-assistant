@@ -157,6 +157,8 @@
     <string name="conversations_title">Conversations</string>
     <string name="new_chat">New Chat</string>
     <string name="delete">Delete</string>
+    <string name="attach_file">Attach file</string>
+    <string name="clear_attachment">Clear attachment</string>
     <string name="menu">Menu</string>
     <string name="back">Back</string>
 

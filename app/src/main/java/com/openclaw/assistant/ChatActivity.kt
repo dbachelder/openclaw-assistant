@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -28,7 +29,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
@@ -41,6 +44,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -50,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.BasicTextField
+import coil.compose.AsyncImage
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -83,6 +88,36 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 showPermissionSettingsDialog()
             }
         }
+    }
+
+    private val attachmentLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val name = getFileName(it)
+            val mimeType = contentResolver.getType(it)
+            viewModel.setAttachment(it, name, mimeType)
+        }
+    }
+
+    private fun getFileName(uri: Uri): String? {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index != -1) result = cursor.getString(index)
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.path
+            val cut = result?.lastIndexOf('/') ?: -1
+            if (cut != -1) {
+                result = result?.substring(cut + 1)
+            }
+        }
+        return result
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,7 +166,9 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onSelectSession = { viewModel.selectSession(it) },
                     onCreateSession = { viewModel.createNewSession() },
                     onDeleteSession = { viewModel.deleteSession(it) },
-                    onAgentSelected = { viewModel.setAgent(it) }
+                    onAgentSelected = { viewModel.setAgent(it) },
+                    onAttachClick = { attachmentLauncher.launch("*/*") },
+                    onClearAttachment = { viewModel.setAttachment(null, null, null) }
                 )
             }
         }
@@ -226,7 +263,9 @@ fun ChatScreen(
     onSelectSession: (String) -> Unit,
     onCreateSession: () -> Unit,
     onDeleteSession: (String) -> Unit,
-    onAgentSelected: (String?) -> Unit = {}
+    onAgentSelected: (String?) -> Unit = {},
+    onAttachClick: () -> Unit = {},
+    onClearAttachment: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
@@ -393,6 +432,9 @@ fun ChatScreen(
                         },
                         isListening = uiState.isListening,
                         isSpeaking = uiState.isSpeaking,
+                        selectedAttachmentName = uiState.selectedAttachmentName,
+                        onAttachClick = onAttachClick,
+                        onClearAttachment = onClearAttachment,
                         onMicClick = {
                             if (uiState.isSpeaking) {
                                 onInterruptAndListen()
@@ -408,9 +450,10 @@ fun ChatScreen(
         ) { paddingValues ->
             Column(modifier = Modifier.padding(paddingValues)) {
                 // Pairing Guidance
-                if (uiState.isPairingRequired && uiState.deviceId != null) {
+                val deviceId = uiState.deviceId
+                if (uiState.isPairingRequired && deviceId != null) {
                     Box(modifier = Modifier.padding(16.dp)) {
-                        PairingRequiredCard(deviceId = uiState.deviceId!!)
+                        PairingRequiredCard(deviceId = deviceId)
                     }
                 }
 
@@ -501,13 +544,44 @@ fun MessageBubble(message: ChatMessage) {
             ) {
                 SelectionContainer {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        if (isUser) {
-                            Text(
-                                text = message.text,
-                                color = contentColor,
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp
+                        if (message.attachmentPath != null && message.attachmentType?.startsWith("image/") == true) {
+                            AsyncImage(
+                                model = message.attachmentPath,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Fit
                             )
+                        } else if (message.attachmentPath != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .padding(bottom = 8.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Icon(Icons.Default.AttachFile, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = message.attachmentPath.substringAfterLast('/'),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        if (isUser) {
+                            if (message.text.isNotBlank()) {
+                                Text(
+                                    text = message.text,
+                                    color = contentColor,
+                                    fontSize = 16.sp,
+                                    lineHeight = 24.sp
+                                )
+                            }
                         } else {
                             MarkdownText(
                                 markdown = message.text,
@@ -670,60 +744,112 @@ fun ChatInputArea(
     onSend: () -> Unit,
     isListening: Boolean,
     isSpeaking: Boolean = false,
+    selectedAttachmentName: String? = null,
+    onAttachClick: () -> Unit = {},
+    onClearAttachment: () -> Unit = {},
     onMicClick: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 8.dp),
-            placeholder = { Text(stringResource(R.string.ask_hint)) },
-            maxLines = 4,
-            shape = RoundedCornerShape(24.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-            // keyboardActions removed to allow newline on Enter
-        )
-
-        val fabColor = when {
-            value.isBlank() && isListening -> MaterialTheme.colorScheme.error
-            value.isBlank() && isSpeaking -> Color(0xFF2196F3) // Blue to indicate interrupt
-            else -> MaterialTheme.colorScheme.primary
+        if (selectedAttachmentName != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        Icons.Default.AttachFile,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = selectedAttachmentName,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onClearAttachment, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.clear_attachment),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         }
 
-        FloatingActionButton(
-            onClick = {
-                if (value.isBlank()) onMicClick() else onSend()
-            },
-            containerColor = fabColor,
-            shape = CircleShape
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp, start = 8.dp, end = 16.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (value.isBlank()) {
-                     when {
-                         isListening -> Icons.Default.Stop
-                         isSpeaking -> Icons.Default.Mic  // Interrupt TTS and listen
-                         else -> Icons.Default.Mic
-                     }
-                } else {
-                     Icons.AutoMirrored.Filled.Send
-                },
-                contentDescription = stringResource(R.string.send_description),
-                tint = Color.White
+            IconButton(onClick = onAttachClick) {
+                Icon(
+                    imageVector = Icons.Default.AttachFile,
+                    contentDescription = stringResource(R.string.attach_file),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+                placeholder = { Text(stringResource(R.string.ask_hint)) },
+                maxLines = 4,
+                shape = RoundedCornerShape(24.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                // keyboardActions removed to allow newline on Enter
             )
+
+            val isSendActive = value.isNotBlank() || selectedAttachmentName != null
+            val fabColor = when {
+                !isSendActive && isListening -> MaterialTheme.colorScheme.error
+                !isSendActive && isSpeaking -> Color(0xFF2196F3) // Blue to indicate interrupt
+                else -> MaterialTheme.colorScheme.primary
+            }
+
+            FloatingActionButton(
+                onClick = {
+                    if (!isSendActive) onMicClick() else onSend()
+                },
+                containerColor = fabColor,
+                shape = CircleShape
+            ) {
+                Icon(
+                    imageVector = if (!isSendActive) {
+                        when {
+                            isListening -> Icons.Default.Stop
+                            isSpeaking -> Icons.Default.Mic  // Interrupt TTS and listen
+                            else -> Icons.Default.Mic
+                        }
+                    } else {
+                        Icons.AutoMirrored.Filled.Send
+                    },
+                    contentDescription = stringResource(R.string.send_description),
+                    tint = Color.White
+                )
+            }
         }
     }
 }

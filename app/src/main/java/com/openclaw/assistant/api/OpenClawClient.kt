@@ -34,7 +34,9 @@ class OpenClawClient {
         message: String,
         sessionId: String,
         authToken: String? = null,
-        agentId: String? = null
+        agentId: String? = null,
+        attachmentBase64: String? = null,
+        attachmentMimeType: String? = null
     ): Result<OpenClawResponse> = withContext(Dispatchers.IO) {
         if (webhookUrl.isBlank()) {
             return@withContext Result.failure(
@@ -50,7 +52,22 @@ class OpenClawClient {
                 val messagesArray = JsonArray()
                 val userMessage = JsonObject().apply {
                     addProperty("role", "user")
-                    addProperty("content", message)
+                    if (attachmentBase64 != null && attachmentMimeType?.startsWith("image/") == true) {
+                        val contentArray = JsonArray()
+                        contentArray.add(JsonObject().apply {
+                            addProperty("type", "text")
+                            addProperty("text", message)
+                        })
+                        contentArray.add(JsonObject().apply {
+                            addProperty("type", "image_url")
+                            add("image_url", JsonObject().apply {
+                                addProperty("url", "data:$attachmentMimeType;base64,$attachmentBase64")
+                            })
+                        })
+                        add("content", contentArray)
+                    } else {
+                        addProperty("content", message)
+                    }
                 }
                 messagesArray.add(userMessage)
                 add("messages", messagesArray)

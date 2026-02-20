@@ -1,8 +1,14 @@
 package com.openclaw.assistant.ui.chat
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.util.Base64
+import java.io.File
+import java.io.FileOutputStream
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -13,13 +19,16 @@ import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.SpeechResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -30,7 +39,9 @@ data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val text: String,
     val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val attachmentPath: String? = null,
+    val attachmentType: String? = null
 )
 
 data class ChatUiState(
@@ -44,7 +55,10 @@ data class ChatUiState(
     val selectedAgentId: String? = null, // null = use default from settings
     val defaultAgentId: String = "main", // From settings, for display when agent list unavailable
     val isPairingRequired: Boolean = false,
-    val deviceId: String? = null
+    val deviceId: String? = null,
+    val selectedAttachmentUri: Uri? = null,
+    val selectedAttachmentMimeType: String? = null,
+    val selectedAttachmentName: String? = null
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -98,7 +112,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                          id = entity.id,
                          text = entity.content,
                          isUser = entity.isUser,
-                         timestamp = entity.timestamp
+                         timestamp = entity.timestamp,
+                         attachmentPath = entity.attachmentPath,
+                         attachmentType = entity.attachmentType
                      )
                  }
              }
@@ -233,6 +249,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(selectedAgentId = agentId) }
     }
 
+    fun setAttachment(uri: Uri?, name: String?, mimeType: String?) {
+        _uiState.update { it.copy(
+            selectedAttachmentUri = uri,
+            selectedAttachmentName = name,
+            selectedAttachmentMimeType = mimeType
+        )}
+    }
+
     private fun getEffectiveAgentId(): String? {
         val selected = _uiState.value.selectedAgentId
         if (selected != null) return selected
@@ -241,12 +265,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendMessage(text: String) {
-        if (text.isBlank()) return
+        if (text.isBlank() && _uiState.value.selectedAttachmentUri == null) return
 
         // Ensure we have a session
         val sessionId = _currentSessionId.value ?: return
+        val attachmentUri = _uiState.value.selectedAttachmentUri
+        val attachmentMimeType = _uiState.value.selectedAttachmentMimeType
 
-        _uiState.update { it.copy(isThinking = true) }
+        _uiState.update { it.copy(
+            isThinking = true,
+            selectedAttachmentUri = null,
+            selectedAttachmentName = null,
+            selectedAttachmentMimeType = null
+        ) }
+
         if (lastInputWasVoice) {
             toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
         }
@@ -254,9 +286,68 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                var attachmentPath: String? = null
+                var attachmentBase64: String? = null
+
+                withContext(Dispatchers.IO) {
+                    attachmentUri?.let { uri ->
+                        val context = getApplication<Application>()
+                        val fileName = "attach_${System.currentTimeMillis()}"
+                        val attachmentsDir = File(context.filesDir, "attachments")
+                        if (!attachmentsDir.exists()) attachmentsDir.mkdirs()
+
+                        val file = File(attachmentsDir, fileName)
+
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            FileOutputStream(file).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        attachmentPath = file.absolutePath
+
+                        if (attachmentMimeType?.startsWith("image/") == true) {
+                            val bitmap = BitmapFactory.decodeFile(attachmentPath)
+                            if (bitmap != null) {
+                                // Resize if too large (e.g. max 1024) to avoid OOM and large payloads
+                                val maxDim = 1024
+                                val scaledBitmap = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                                    val scale = maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)
+                                    Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
+                                } else {
+                                    bitmap
+                                }
+
+                                val outputStream = ByteArrayOutputStream()
+                                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+                                val bytes = outputStream.toByteArray()
+                                attachmentBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+                                if (scaledBitmap != bitmap) scaledBitmap.recycle()
+                                bitmap.recycle()
+                            }
+                        }
+                    }
+                }
+
                 // Save User Message
-                chatRepository.addMessage(sessionId, text, isUser = true)
-                sendViaHttp(sessionId, text)
+                chatRepository.addMessage(
+                    sessionId,
+                    text,
+                    isUser = true,
+                    attachmentPath = attachmentPath,
+                    attachmentType = attachmentMimeType
+                )
+
+                // If it's a non-image file, we can't send it via Vision API,
+                // but we can at least mention it in the text.
+                val finalMessage = if (attachmentPath != null && attachmentMimeType?.startsWith("image/") != true) {
+                    val fileName = attachmentPath!!.substringAfterLast('/')
+                    if (text.isNotBlank()) "$text\n\n[Attached file: $fileName]" else "[Attached file: $fileName]"
+                } else {
+                    text
+                }
+
+                sendViaHttp(sessionId, finalMessage, attachmentBase64, attachmentMimeType)
             } catch (e: Exception) {
                 stopThinkingSound()
                 _uiState.update { it.copy(isThinking = false, error = e.message) }
@@ -264,13 +355,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun sendViaHttp(sessionId: String, text: String) {
+    private suspend fun sendViaHttp(
+        sessionId: String,
+        text: String,
+        attachmentBase64: String? = null,
+        attachmentMimeType: String? = null
+    ) {
         val result = apiClient.sendMessage(
             webhookUrl = settings.getChatCompletionsUrl(),
             message = text,
             sessionId = sessionId,
             authToken = settings.authToken.takeIf { it.isNotBlank() },
-            agentId = getEffectiveAgentId()
+            agentId = getEffectiveAgentId(),
+            attachmentBase64 = attachmentBase64,
+            attachmentMimeType = attachmentMimeType
         )
 
         result.fold(

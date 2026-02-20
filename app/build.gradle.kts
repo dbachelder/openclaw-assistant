@@ -155,6 +155,9 @@ dependencies {
     // Markdown rendering
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.14.0")
 
+    // Image loading
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     
