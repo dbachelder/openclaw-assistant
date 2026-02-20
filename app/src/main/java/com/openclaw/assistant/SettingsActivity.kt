@@ -713,20 +713,6 @@ fun SettingsScreen(
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
                     // Speech silence timeout
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -822,6 +808,20 @@ fun SettingsScreen(
                                 Text(stringResource(R.string.custom_wake_word_help), color = Color.Gray, fontSize = 12.sp)
                             }
                         )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
                     }
                 }
             }
