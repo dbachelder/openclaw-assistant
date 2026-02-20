@@ -1,6 +1,8 @@
 package com.openclaw.assistant.gateway
 
+import android.content.Context
 import android.util.Log
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -33,6 +35,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -43,7 +48,7 @@ import kotlin.math.pow
  * - Gson instead of kotlinx.serialization
  * - Merged connection + chat control into a single class
  */
-class GatewayClient {
+class GatewayClient(context: android.content.Context) {
 
     companion object {
         private const val TAG = "GatewayClient"
@@ -51,9 +56,9 @@ class GatewayClient {
         @Volatile
         private var instance: GatewayClient? = null
 
-        fun getInstance(): GatewayClient {
+        fun getInstance(context: android.content.Context? = null): GatewayClient {
             return instance ?: synchronized(this) {
-                instance ?: GatewayClient().also { instance = it }
+                instance ?: GatewayClient(context!!).also { instance = it }
             }
         }
     }
@@ -62,6 +67,8 @@ class GatewayClient {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<RpcResult>>()
+    
+    private val deviceIdentity = DeviceIdentity(context)
 
     // --- Public state ---
 
@@ -77,10 +84,22 @@ class GatewayClient {
     private val _streamingText = MutableStateFlow<String?>(null)
     val streamingText: StateFlow<String?> = _streamingText.asStateFlow()
 
+    private val _agentList = MutableStateFlow<AgentListResult?>(null)
+    val agentList: StateFlow<AgentListResult?> = _agentList.asStateFlow()
+
+    private val _missingScopeError = MutableStateFlow<String?>(null)
+    val missingScopeError: StateFlow<String?> = _missingScopeError.asStateFlow()
+
+    private val _isPairingRequired = MutableStateFlow(false)
+    val isPairingRequired: StateFlow<Boolean> = _isPairingRequired.asStateFlow()
+
     /** The main session key received from the server during connect. */
     @Volatile
     var mainSessionKey: String? = null
         private set
+
+    val deviceId: String?
+        get() = deviceIdentity.deviceId
 
     // --- Internal connection state ---
 
@@ -125,6 +144,7 @@ class GatewayClient {
             mainSessionKey = null
             _connectionState.value = ConnectionState.DISCONNECTED
             _streamingText.value = null
+            _agentList.value = null
         }
     }
 
@@ -151,8 +171,13 @@ class GatewayClient {
                 add("attachments", attachments)
             }
         }
-        val result = request("chat.send", params)
-        return result.payload?.get("runId")?.asString
+        val result = request("chat.send", params, timeoutMs = 35_000)
+        if (!result.ok) {
+            throw IllegalStateException("chat.send failed: ${result.errorMessage ?: result.errorCode ?: "unknown"}")
+        }
+        val runId = result.payload?.get("runId")?.asString
+        Log.d(TAG, "chat.send ok, runId=$runId")
+        return runId
     }
 
     /**
@@ -179,6 +204,35 @@ class GatewayClient {
         }
         val result = request("chat.history", params)
         return parseChatHistory(result.payload)
+    }
+
+    /**
+     * Fetch the list of available agents from the gateway.
+     */
+
+    suspend fun getAgentList(): AgentListResult? {
+        Log.e(TAG, "Requesting agent list (agents.list)...")
+        val result = request("agents.list", null)
+        
+        if (!result.ok) {
+            val errorMsg = result.errorMessage ?: result.errorCode ?: "Unknown error"
+            Log.e(TAG, "Failed to get agent list: $errorMsg")
+
+            // Check for missing scope error
+            if (errorMsg.contains("missing scope", ignoreCase = true)) {
+                _missingScopeError.value = errorMsg
+            }
+
+            throw IllegalStateException(errorMsg)
+        }
+
+        // Clear error on success
+        _missingScopeError.value = null
+
+        return parseAgentListResult(result.payload).also { 
+            Log.e(TAG, "Agent list received: ${it?.agents?.size} agents")
+            _agentList.value = it 
+        }
     }
 
     /**
@@ -212,8 +266,13 @@ class GatewayClient {
 
                 connectOnce(host, desiredPort, desiredToken, desiredUseTls)
                 attempt = 0
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Connection failed (attempt $attempt): ${e.message}")
+                if (attempt == 0 && !isTransientNetworkError(e)) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
                 attempt++
                 _connectionState.value = ConnectionState.RECONNECTING
                 val sleepMs = min(8_000L, (350.0 * 1.7.pow(attempt.toDouble())).toLong())
@@ -230,7 +289,7 @@ class GatewayClient {
 
         val scheme = if (useTls) "wss" else "ws"
         val url = "$scheme://$host:$port"
-        Log.d(TAG, "Connecting to $url")
+        Log.e(TAG, "Connecting to $url")
 
         val request = Request.Builder().url(url).build()
         currentSocket = httpClient.newWebSocket(request, WsListener())
@@ -245,7 +304,16 @@ class GatewayClient {
         sendConnectRpc(token)
 
         _connectionState.value = ConnectionState.CONNECTED
-        Log.d(TAG, "Connected to $url, mainSessionKey=$mainSessionKey")
+        Log.e(TAG, "Connected to $url, mainSessionKey=$mainSessionKey")
+
+        // Auto-fetch agent list after successful connect
+        scope.launch {
+            try {
+                getAgentList()
+            } catch (e: Exception) {
+                Log.w(TAG, "Auto-fetch agent list failed: ${e.message}")
+            }
+        }
 
         // Wait until socket closes
         closeDeferred?.await()
@@ -263,35 +331,83 @@ class GatewayClient {
         }
 
         val clientObj = JsonObject().apply {
-            addProperty("id", "openclaw-assistant")
+            addProperty("id", "openclaw-android")
             addProperty("version", "1.0")
             addProperty("platform", "android")
-            addProperty("mode", "operator")
+            addProperty("mode", "ui")
         }
 
         val params = JsonObject().apply {
             addProperty("minProtocol", GATEWAY_PROTOCOL_VERSION)
             addProperty("maxProtocol", GATEWAY_PROTOCOL_VERSION)
             add("client", clientObj)
-            addProperty("role", "operator")
             if (!token.isNullOrBlank()) {
                 val authObj = JsonObject().apply {
                     addProperty("token", token)
                 }
                 add("auth", authObj)
             }
+            
+            // Add device auth if available
+            if (deviceIdentity.deviceId != null && deviceIdentity.publicKeyBase64Url != null) {
+                val signedAtMs = System.currentTimeMillis()
+                val role = "operator" // Default role
+                val scopes = listOf("operator.admin") // Default scopes requested
+                
+                val payload = deviceIdentity.buildAuthPayload(
+                    clientId = "openclaw-android",
+                    clientMode = "ui",
+                    role = role,
+                    scopes = scopes,
+                    signedAtMs = signedAtMs,
+                    token = token,
+                    nonce = nonce
+                )
+                
+                val signature = deviceIdentity.sign(payload)
+                
+                if (signature != null) {
+                    val deviceObj = JsonObject().apply {
+                        addProperty("id", deviceIdentity.deviceId)
+                        addProperty("publicKey", deviceIdentity.publicKeyBase64Url)
+                        addProperty("signature", signature)
+                        addProperty("signedAt", signedAtMs)
+                        if (nonce != null) addProperty("nonce", nonce)
+                    }
+                    add("device", deviceObj)
+                    
+                    // Also explicitly request the scopes in the top level
+                    val scopesArray = JsonArray()
+                    scopes.forEach { scopesArray.add(it) }
+                    add("scopes", scopesArray)
+                    addProperty("role", role)
+                }
+            }
         }
 
         val result = request("connect", params, timeoutMs = 8_000)
         if (!result.ok) {
-            throw IllegalStateException(result.errorMessage ?: "connect failed")
+            val errorCode = result.errorCode
+            val errorMsg = result.errorMessage ?: "connect failed"
+            
+            if (errorCode == "NOT_PAIRED" || errorMsg.contains("pairing required", ignoreCase = true)) {
+                _isPairingRequired.value = true
+            }
+            
+            throw IllegalStateException("$errorMsg ($errorCode)")
         }
+
+        // Clear pairing error on success
+        _isPairingRequired.value = false
 
         // Extract mainSessionKey from response
         result.payload?.let { payload ->
+            Log.d(TAG, "Connect payload keys: ${payload.keySet()}")
             val snapshot = payload.getAsJsonObject("snapshot")
+            Log.d(TAG, "Snapshot keys: ${snapshot?.keySet()}")
             val sessionDefaults = snapshot?.getAsJsonObject("sessionDefaults")
             mainSessionKey = sessionDefaults?.get("mainSessionKey")?.asString
+            Log.d(TAG, "mainSessionKey=$mainSessionKey")
         }
     }
 
@@ -341,12 +457,15 @@ class GatewayClient {
     private fun handleMessage(text: String) {
         try {
             val frame = JsonParser.parseString(text).asJsonObject
-            when (frame.get("type")?.asString) {
+            val type = frame.get("type")?.asString
+            Log.d(TAG, "WS recv type=$type, keys=${frame.keySet()}")
+            when (type) {
                 "res" -> handleResponse(frame)
                 "event" -> handleEvent(frame)
+                else -> Log.w(TAG, "Unknown frame type: $type, frame=${text.take(200)}")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse message: ${e.message}")
+            Log.w(TAG, "Failed to parse message: ${e.message}, raw=${text.take(200)}")
         }
     }
 
@@ -358,6 +477,7 @@ class GatewayClient {
         val errorCode = error?.get("code")?.asString
         val errorMessage = error?.get("message")?.asString
 
+        Log.d(TAG, "RPC response id=${id.take(8)}… ok=$ok, error=$errorCode: $errorMessage")
         pending.remove(id)?.complete(RpcResult(ok, payload, errorCode, errorMessage))
     }
 
@@ -365,6 +485,7 @@ class GatewayClient {
         val event = frame.get("event")?.asString ?: return
         val payloadJson = frame.get("payload")?.toString()
             ?: frame.get("payloadJSON")?.asString
+        Log.d(TAG, "WS event=$event, payloadLen=${payloadJson?.length ?: 0}")
 
         when (event) {
             "connect.challenge" -> {
@@ -388,6 +509,7 @@ class GatewayClient {
                 if (payloadJson.isNullOrBlank()) return
                 handleAgentEvent(payloadJson)
             }
+            else -> Log.w(TAG, "Unhandled event: $event, payload=${payloadJson?.take(200)}")
         }
     }
 
@@ -400,9 +522,10 @@ class GatewayClient {
                 state = payload.get("state")?.asString,
                 errorMessage = payload.get("errorMessage")?.asString
             )
+            Log.d(TAG, "Chat event: state=${event.state}, runId=${event.runId}")
             _chatEvents.tryEmit(event)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse chat event: ${e.message}")
+            Log.w(TAG, "Failed to parse chat event: ${e.message}, json=${payloadJson.take(200)}")
         }
     }
 
@@ -424,6 +547,7 @@ class GatewayClient {
                 stream = payload.get("stream")?.asString,
                 data = streamData
             )
+            Log.d(TAG, "Agent event: stream=${event.stream}, textLen=${streamData?.text?.length ?: 0}, phase=${streamData?.phase}")
             _agentEvents.tryEmit(event)
 
             // Update streaming text for "assistant" stream
@@ -433,6 +557,23 @@ class GatewayClient {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse agent event: ${e.message}")
         }
+    }
+
+    // --- Internal: Agent list parsing ---
+
+    private fun parseAgentListResult(payload: JsonObject?): AgentListResult? {
+        if (payload == null) return null
+        val defaultId = payload.get("defaultId")?.asString ?: "main"
+        val agentsArray = payload.getAsJsonArray("agents") ?: return AgentListResult(defaultId, emptyList())
+
+        val agents = agentsArray.mapNotNull { item ->
+            if (!item.isJsonObject) return@mapNotNull null
+            val obj = item.asJsonObject
+            val id = obj.get("id")?.asString ?: return@mapNotNull null
+            val name = obj.get("name")?.asString ?: id
+            AgentInfo(id = id, name = name)
+        }
+        return AgentListResult(defaultId = defaultId, agents = agents)
     }
 
     // --- Internal: Chat history parsing ---
@@ -468,7 +609,7 @@ class GatewayClient {
 
     private inner class WsListener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            Log.d(TAG, "WebSocket opened")
+            Log.e(TAG, "WebSocket opened")
             // Don't complete connectDeferred here; wait for connect RPC response
             connectDeferred?.complete(Unit)
         }
@@ -479,6 +620,9 @@ class GatewayClient {
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Log.w(TAG, "WebSocket failure: ${t.message}")
+            if (!isTransientNetworkError(t)) {
+                FirebaseCrashlytics.getInstance().recordException(t)
+            }
             if (connectDeferred?.isCompleted == false) {
                 connectDeferred?.completeExceptionally(t)
             }
@@ -505,5 +649,16 @@ class GatewayClient {
             waiter.cancel()
         }
         pending.clear()
+    }
+
+    private fun isTransientNetworkError(t: Throwable): Boolean {
+        return t is SocketTimeoutException ||
+                t is SocketException ||
+                t is ConnectException ||
+                t is java.io.EOFException ||
+                t is javax.net.ssl.SSLException ||
+                t is java.net.ProtocolException ||
+                t is android.system.ErrnoException ||
+                (t.cause != null && isTransientNetworkError(t.cause!!))
     }
 }

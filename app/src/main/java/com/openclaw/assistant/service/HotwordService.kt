@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.openclaw.assistant.MainActivity
 import com.openclaw.assistant.R
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.openclaw.assistant.data.SettingsRepository
 import kotlinx.coroutines.*
 import org.vosk.Model
@@ -73,6 +74,8 @@ class HotwordService : Service(), VoskRecognitionListener {
     private var audioRetryCount = 0
     private val MAX_AUDIO_RETRIES = 5
     private var watchdogJob: Job? = null
+    private var errorRecoveryJob: Job? = null
+    private var retryJob: Job? = null
     private val SESSION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
 
     private val controlReceiver = object : android.content.BroadcastReceiver() {
@@ -120,10 +123,18 @@ class HotwordService : Service(), VoskRecognitionListener {
             }
             if (isVoskCrash) {
                 Log.e(TAG, "Caught uncaught Vosk exception on thread ${thread.name}", throwable)
-                speechService = null
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    if (!isSessionActive) {
-                        resumeHotwordDetection()
+                if (throwable is UnsatisfiedLinkError || throwable.cause is UnsatisfiedLinkError) {
+                    FirebaseCrashlytics.getInstance().recordException(throwable)
+                    getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+                        .edit().putBoolean("vosk_unsupported", true).apply()
+                    // Don't resume - device doesn't support Vosk
+                } else {
+                    FirebaseCrashlytics.getInstance().recordException(throwable)
+                    speechService = null
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (!isSessionActive) {
+                            resumeHotwordDetection()
+                        }
                     }
                 }
             } else {
@@ -143,7 +154,32 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, createNotification())
+        // Android 14+ requires RECORD_AUDIO runtime permission for foregroundServiceType="microphone"
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO permission not granted. Cannot start foreground service with microphone type.")
+            showPermissionNotification()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification())
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Failed to start foreground service", e)
+            FirebaseCrashlytics.getInstance().recordException(e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         initVosk()
         return START_STICKY
     }
@@ -178,6 +214,48 @@ class HotwordService : Service(), VoskRecognitionListener {
         speechService?.shutdown()
     }
 
+    private fun showPermissionNotification() {
+        createNotificationChannel()
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_mic_permission_title))
+            .setContentText(getString(R.string.notification_mic_permission_content))
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID + 1, notification)
+    }
+
+    private fun showMicUnavailableNotification() {
+        createNotificationChannel()
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_mic_unavailable_title))
+            .setContentText(getString(R.string.notification_mic_unavailable_content))
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID + 2, notification)
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -208,6 +286,33 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     private fun initVosk() {
+        if (model != null) {
+            if (!isSessionActive) startHotwordListening()
+            return
+        }
+        val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+
+        // Clear vosk_unsupported flag when the app is updated, so the new Vosk
+        // native libraries get a chance to load on devices that previously failed.
+        val currentVersion = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionCode
+            }
+        } catch (e: Exception) { 1 }
+        val unsupportedSinceVersion = prefs.getInt("vosk_unsupported_version", 0)
+        if (prefs.getBoolean("vosk_unsupported", false)) {
+            if (unsupportedSinceVersion < currentVersion) {
+                Log.d(TAG, "App updated ($unsupportedSinceVersion -> $currentVersion). Retrying Vosk init.")
+                prefs.edit().remove("vosk_unsupported").remove("vosk_unsupported_version").apply()
+            } else {
+                Log.w(TAG, "Vosk is unsupported on this device. Skipping init.")
+                return
+            }
+        }
+
         scope.launch(Dispatchers.IO) {
             try {
                 val modelPath = copyAssets()
@@ -217,8 +322,18 @@ class HotwordService : Service(), VoskRecognitionListener {
                         if (!isSessionActive) startHotwordListening()
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Vosk native library not supported on this device", e)
+                FirebaseCrashlytics.getInstance().recordException(e)
+                prefs.edit()
+                    .putBoolean("vosk_unsupported", true)
+                    .putInt("vosk_unsupported_version", currentVersion)
+                    .apply()
             } catch (e: Exception) {
                 Log.e(TAG, "Init error", e)
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
     }
@@ -300,6 +415,17 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun startHotwordListening() {
         if (model == null || isSessionActive) return
 
+        // Clean up any existing speechService to prevent resource leak
+        speechService?.let {
+            try {
+                it.stop()
+                it.shutdown()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clean up existing speechService", e)
+            }
+            speechService = null
+        }
+
         // Verify RECORD_AUDIO permission before touching AudioRecord
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
@@ -360,12 +486,14 @@ class HotwordService : Service(), VoskRecognitionListener {
         if (audioRetryCount >= MAX_AUDIO_RETRIES) {
             Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
             audioRetryCount = 0
+            showMicUnavailableNotification()
             return
         }
         audioRetryCount++
         val delayMs = (2000L * audioRetryCount).coerceAtMost(10000L)
         Log.w(TAG, "Scheduling audio retry #$audioRetryCount in ${delayMs}ms")
-        scope.launch {
+        retryJob?.cancel()
+        retryJob = scope.launch {
             delay(delayMs)
             if (!isSessionActive) {
                 startHotwordListening()
@@ -378,17 +506,22 @@ class HotwordService : Service(), VoskRecognitionListener {
     override fun onResult(hypothesis: String?) {
         if (isListeningForCommand || isSessionActive) return
         hypothesis?.let {
-            val json = JSONObject(it)
-            val text = json.optString("text", "")
-            
-            // Check against configured wake words
-            val wakeWords = settings.getWakeWords()
-            val detected = wakeWords.any { word -> text.contains(word) }
-            
-            if (detected) {
-                Log.e(TAG, "Hotword detected! Text: $text")
-                onHotwordDetected()
+            try {
+                val json = JSONObject(it)
+                val text = json.optString("text", "")
+
+                // Check against configured wake words
+                val wakeWords = settings.getWakeWords()
+                val detected = wakeWords.any { word -> text.contains(word) }
+
+                if (detected) {
+                    Log.e(TAG, "Hotword detected! Text: $text")
+                    onHotwordDetected()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse Vosk result: $it", e)
             }
+            Unit
         }
     }
 
@@ -399,7 +532,8 @@ class HotwordService : Service(), VoskRecognitionListener {
     override fun onError(exception: Exception?) {
         Log.e(TAG, "Vosk Error: " + exception?.message)
         if (isSessionActive) return
-        scope.launch {
+        errorRecoveryJob?.cancel()
+        errorRecoveryJob = scope.launch {
             delay(3000)
             if (!isSessionActive) resumeHotwordDetection()
         }

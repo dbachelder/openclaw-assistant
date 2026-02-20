@@ -1,6 +1,9 @@
 package com.openclaw.assistant
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,7 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.service.HotwordService
+import com.openclaw.assistant.gateway.AgentInfo
+import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
+import com.openclaw.assistant.utils.SystemInfoProvider
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
@@ -60,19 +69,19 @@ fun SettingsScreen(
 ) {
     var webhookUrl by remember { mutableStateOf(settings.webhookUrl) }
     var authToken by remember { mutableStateOf(settings.authToken) }
-    var connectionMode by remember { mutableStateOf(settings.connectionMode) }
-    var gatewayPort by remember { mutableStateOf(settings.gatewayPort.toString()) }
+    var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
     var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
     var ttsSpeed by remember { mutableStateOf(settings.ttsSpeed) }
     var continuousMode by remember { mutableStateOf(settings.continuousMode) }
     var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
     var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
     var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
+    var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
 
     var showAuthToken by remember { mutableStateOf(false) }
     var showWakeWordMenu by remember { mutableStateOf(false) }
-    var showConnectionModeMenu by remember { mutableStateOf(false) }
+    var showLanguageMenu by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -81,14 +90,59 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
+    // Agent list from gateway
+    val gatewayClient = remember { GatewayClient.getInstance() }
+    val agentListState by gatewayClient.agentList.collectAsState()
+    val availableAgents = remember(agentListState) { 
+        agentListState?.agents?.distinctBy { it.id } ?: emptyList() 
+    }
+    var isFetchingAgents by remember { mutableStateOf(false) }
+    var showAgentMenu by remember { mutableStateOf(false) }
+
     // TTS Engines
     var ttsEngine by remember { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
     var showEngineMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // Load engines off-main thread ideally, but for now simple
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
+    }
+
+    // Reactively observe agent list from gateway (updates after connection test)
+    LaunchedEffect(Unit) {
+        Log.e("SettingsActivity", "LaunchedEffect: Checking connection to fetch agents...")
+        if (gatewayClient.isConnected()) {
+            Log.e("SettingsActivity", "Already connected, fetching agent list...")
+            try {
+                gatewayClient.getAgentList()
+            } catch (e: Exception) {
+                Log.e("SettingsActivity", "Failed to auto-fetch agents: ${e.message}")
+            }
+        }
+    }
+    
+    LaunchedEffect(availableAgents) {
+        Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
+    }
+
+    // Speech recognition language options - loaded dynamically from device
+    var speechLanguageOptions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var isLoadingLanguages by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        isLoadingLanguages = true
+        val deviceLanguages = com.openclaw.assistant.speech.SpeechLanguageUtils
+            .getAvailableLanguages(context)
+
+        speechLanguageOptions = buildList {
+            add("" to context.getString(R.string.speech_language_system_default))
+            if (deviceLanguages != null) {
+                addAll(deviceLanguages.map { it.tag to it.displayName })
+            } else {
+                addAll(FALLBACK_SPEECH_LANGUAGES)
+            }
+        }
+        isLoadingLanguages = false
     }
 
     // Wake word options
@@ -113,9 +167,8 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             settings.webhookUrl = webhookUrl
-                            settings.authToken = authToken
-                            settings.connectionMode = connectionMode
-                            settings.gatewayPort = gatewayPort.toIntOrNull() ?: 18789
+                            settings.authToken = authToken.trim()
+                            settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
                             settings.ttsEngine = ttsEngine
@@ -123,7 +176,11 @@ fun SettingsScreen(
                             settings.wakeWordPreset = wakeWordPreset
                             settings.customWakeWord = customWakeWord
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
+                            settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
+                            if (settings.hotwordEnabled) {
+                                HotwordService.start(context)
+                            }
                             onSave()
                         },
                         enabled = webhookUrl.isNotBlank() && !isTesting
@@ -178,7 +235,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = authToken,
                         onValueChange = { 
-                            authToken = it
+                            authToken = it.trim()
                             testResult = null
                         },
                         label = { Text(stringResource(R.string.auth_token_label)) },
@@ -198,62 +255,107 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Connection Mode
-                    ExposedDropdownMenuBox(
-                        expanded = showConnectionModeMenu,
-                        onExpandedChange = { showConnectionModeMenu = it }
-                    ) {
-                        val modeLabel = when (connectionMode) {
-                            "websocket" -> stringResource(R.string.connection_mode_websocket)
-                            "http" -> stringResource(R.string.connection_mode_http)
-                            else -> stringResource(R.string.connection_mode_auto)
-                        }
-                        OutlinedTextField(
-                            value = modeLabel,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.connection_mode)) },
-                            leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showConnectionModeMenu) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = showConnectionModeMenu,
-                            onDismissRequest = { showConnectionModeMenu = false }
-                        ) {
-                            listOf(
-                                "auto" to stringResource(R.string.connection_mode_auto),
-                                "websocket" to stringResource(R.string.connection_mode_websocket),
-                                "http" to stringResource(R.string.connection_mode_http)
-                            ).forEach { (value, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        connectionMode = value
-                                        showConnectionModeMenu = false
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Default Agent
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        if (availableAgents.isNotEmpty()) {
+                            // Dropdown when agents are loaded
+                            ExposedDropdownMenuBox(
+                                expanded = showAgentMenu,
+                                onExpandedChange = { showAgentMenu = it }
+                            ) {
+                                val agentLabel = availableAgents.find { it.id == defaultAgentId }?.name ?: defaultAgentId
+                                OutlinedTextField(
+                                    value = agentLabel,
+                                    onValueChange = { defaultAgentId = it },
+                                    label = { Text(stringResource(R.string.default_agent_label)) },
+                                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (isFetchingAgents) {
+                                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                            } else {
+                                                IconButton(onClick = {
+                                                    scope.launch {
+                                                        isFetchingAgents = true
+                                                        if (gatewayClient.isConnected()) {
+                                                            try {
+                                                                gatewayClient.getAgentList()
+                                                            } catch (e: Exception) {
+                                                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            }
+                                                        } else {
+                                                            Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        isFetchingAgents = false
+                                                    }
+                                                }) {
+                                                    Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
+                                                }
+                                            }
+                                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = showAgentMenu)
+                                        }
                                     },
-                                    leadingIcon = {
-                                        if (connectionMode == value) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = showAgentMenu,
+                                    onDismissRequest = { showAgentMenu = false }
+                                ) {
+                                    availableAgents.forEach { agent ->
+                                        DropdownMenuItem(
+                                            text = { Text(agent.name) },
+                                            onClick = {
+                                                defaultAgentId = agent.id
+                                                showAgentMenu = false
+                                            },
+                                            leadingIcon = {
+                                                if (defaultAgentId == agent.id) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Text field fallback before connection or if no agents found
+                            OutlinedTextField(
+                                value = defaultAgentId,
+                                onValueChange = { defaultAgentId = it },
+                                label = { Text(stringResource(R.string.default_agent_label)) },
+                                placeholder = { Text(stringResource(R.string.default_agent_hint)) },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                trailingIcon = {
+                                    if (isFetchingAgents) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                isFetchingAgents = true
+                                                if (gatewayClient.isConnected()) {
+                                                    try {
+                                                        gatewayClient.getAgentList()
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                } else {
+                                                    Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                }
+                                                isFetchingAgents = false
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Agents")
                                         }
                                     }
-                                )
-                            }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
                         }
-                    }
-
-                    // Gateway Port (only for websocket/auto modes)
-                    if (connectionMode != "http") {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = gatewayPort,
-                            onValueChange = { gatewayPort = it.filter { c -> c.isDigit() } },
-                            label = { Text(stringResource(R.string.gateway_port)) },
-                            leadingIcon = { Icon(Icons.Default.Router, contentDescription = null) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -266,13 +368,59 @@ fun SettingsScreen(
                                 try {
                                     isTesting = true
                                     testResult = null
-                                    val result = apiClient.testConnection(webhookUrl, authToken)
+                                    // Compute chat completions URL for testing
+                                    val testUrl = webhookUrl.trimEnd('/').let { url ->
+                                        if (url.contains("/v1/")) url else "$url/v1/chat/completions"
+                                    }
+                                    val result = apiClient.testConnection(testUrl, authToken.trim())
                                     result.fold(
                                         onSuccess = {
                                             testResult = TestResult(success = true, message = context.getString(R.string.connected))
                                             settings.webhookUrl = webhookUrl
-                                            settings.authToken = authToken
+                                            settings.authToken = authToken.trim()
                                             settings.isVerified = true
+
+                                            // Fetch agent list via WebSocket
+                                            scope.launch {
+                                                isFetchingAgents = true
+                                                try {
+                                                    val baseUrl = settings.getBaseUrl()
+                                                    val parsedUrl = java.net.URL(baseUrl)
+                                                    val host = parsedUrl.host
+                                                    val useTls = parsedUrl.protocol == "https"
+                                                    val port = if (useTls) {
+                                                        if (parsedUrl.port > 0) parsedUrl.port else 443
+                                                    } else {
+                                                        if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
+                                                    }
+                                                    val token = authToken.takeIf { t -> t.isNotBlank() }
+
+                                                    if (!gatewayClient.isConnected()) {
+                                                        gatewayClient.connect(host, port, token, useTls = useTls)
+                                                        // Wait for connection
+                                                        for (i in 1..20) {
+                                                            delay(250)
+                                                            if (gatewayClient.isConnected()) break
+                                                        }
+                                                    }
+
+                                                    if (gatewayClient.isConnected()) {
+                                                        Log.e("SettingsActivity", "Connection successful, fetching agent list...")
+                                                        try {
+                                                            val agentResult = gatewayClient.getAgentList()
+                                                            Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
+                                                        } catch (e: Exception) {
+                                                            Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
+                                                            // Show toast for this error specifically since it's part of the test
+                                                            Toast.makeText(context, "Connected, but failed to list agents: ${e.message}", Toast.LENGTH_LONG).show()
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
+                                                } finally {
+                                                    isFetchingAgents = false
+                                                }
+                                            }
                                         },
                                         onFailure = {
                                             testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
@@ -329,6 +477,91 @@ fun SettingsScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
+            // --- Speech Language card ---
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.speech_language_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (isLoadingLanguages) {
+                        OutlinedTextField(
+                            value = stringResource(R.string.speech_language_loading),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.speech_language_label)) },
+                            trailingIcon = {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        ExposedDropdownMenuBox(
+                            expanded = showLanguageMenu,
+                            onExpandedChange = { showLanguageMenu = it }
+                        ) {
+                            val currentLabel = if (speechLanguage.isEmpty()) {
+                                stringResource(R.string.speech_language_system_default)
+                            } else {
+                                speechLanguageOptions.find { it.first == speechLanguage }?.second
+                                    ?: speechLanguage
+                            }
+
+                            OutlinedTextField(
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.speech_language_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLanguageMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+
+                            ExposedDropdownMenu(
+                                expanded = showLanguageMenu,
+                                onDismissRequest = { showLanguageMenu = false }
+                            ) {
+                                speechLanguageOptions.forEach { (tag, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            speechLanguage = tag
+                                            showLanguageMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (speechLanguage == tag) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // --- Voice Output card ---
+            Text(
+                text = stringResource(R.string.voice_output),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -342,8 +575,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.voice_output), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.read_ai_responses), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(stringResource(R.string.read_ai_responses), style = MaterialTheme.typography.bodyLarge)
                         }
                         Switch(checked = ttsEnabled, onCheckedChange = { ttsEnabled = it })
                     }
@@ -351,102 +583,127 @@ fun SettingsScreen(
                     if (ttsEnabled) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
 
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            // TTS Engine Selection
-                            ExposedDropdownMenuBox(
+                        // TTS Engine Selection
+                        ExposedDropdownMenuBox(
+                            expanded = showEngineMenu,
+                            onExpandedChange = { showEngineMenu = it }
+                        ) {
+                            val currentLabel = if (ttsEngine.isEmpty()) {
+                                stringResource(R.string.tts_engine_auto)
+                            } else {
+                                availableEngines.find { it.name == ttsEngine }?.label ?: ttsEngine
+                            }
+
+                            OutlinedTextField(
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(stringResource(R.string.tts_engine_label)) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showEngineMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+
+                            ExposedDropdownMenu(
                                 expanded = showEngineMenu,
-                                onExpandedChange = { showEngineMenu = it }
+                                onDismissRequest = { showEngineMenu = false }
                             ) {
-                                val currentLabel = if (ttsEngine.isEmpty()) {
-                                    stringResource(R.string.tts_engine_auto)
-                                } else {
-                                    availableEngines.find { it.name == ttsEngine }?.label ?: ttsEngine
-                                }
-                                
-                                OutlinedTextField(
-                                    value = currentLabel,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(R.string.tts_engine_label)) },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showEngineMenu) },
-                                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.tts_engine_auto)) },
+                                    onClick = {
+                                        ttsEngine = ""
+                                        showEngineMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (ttsEngine.isEmpty()) {
+                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
                                 )
-                                
-                                ExposedDropdownMenu(
-                                    expanded = showEngineMenu,
-                                    onDismissRequest = { showEngineMenu = false }
-                                ) {
-                                    // Auto option
+
+                                availableEngines.forEach { engine ->
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.tts_engine_auto)) },
+                                        text = { Text(engine.label) },
                                         onClick = {
-                                            ttsEngine = ""
+                                            ttsEngine = engine.name
                                             showEngineMenu = false
                                         },
                                         leadingIcon = {
-                                            if (ttsEngine.isEmpty()) {
+                                            if (ttsEngine == engine.name) {
                                                 Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                             }
                                         }
                                     )
-                                    
-                                    availableEngines.forEach { engine ->
-                                        DropdownMenuItem(
-                                            text = { Text(engine.label) },
-                                            onClick = {
-                                                ttsEngine = engine.name
-                                                showEngineMenu = false
-                                            },
-                                            leadingIcon = {
-                                                if (ttsEngine == engine.name) {
-                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
-                                        )
-                                    }
                                 }
-                            }
-
-
-
-                            // Show Speed setting ONLY if Google TTS is selected (or Auto resolving to Google)
-                            val effectiveEngine = if (ttsEngine.isEmpty()) {
-                                com.openclaw.assistant.speech.TTSEngineUtils.getDefaultEngine(context)
-                            } else {
-                                ttsEngine
-                            }
-                            
-                            val isGoogleTTS = effectiveEngine == SettingsRepository.GOOGLE_TTS_PACKAGE
-
-                            if (isGoogleTTS) {
-                                Spacer(modifier = Modifier.height(16.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(stringResource(R.string.voice_speed), style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        text = "%.1fx".format(ttsSpeed),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                
-                                Slider(
-                                    value = ttsSpeed,
-                                    onValueChange = { ttsSpeed = it },
-                                    valueRange = 0.5f..3.0f,
-                                    steps = 24, // Steps of 0.1
-                                    modifier = Modifier.fillMaxWidth()
-                                )
                             }
                         }
+
+                        // Voice Speed (only if Google TTS)
+                        val effectiveEngine = if (ttsEngine.isEmpty()) {
+                            com.openclaw.assistant.speech.TTSEngineUtils.getDefaultEngine(context)
+                        } else {
+                            ttsEngine
+                        }
+                        val isGoogleTTS = effectiveEngine == SettingsRepository.GOOGLE_TTS_PACKAGE
+
+                        if (isGoogleTTS) {
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(stringResource(R.string.voice_speed), style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "%.1fx".format(ttsSpeed),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Slider(
+                                value = ttsSpeed,
+                                onValueChange = { ttsSpeed = it },
+                                valueRange = 0.5f..3.0f,
+                                steps = 24,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
-                    
+
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-                    
+
+                    // Thinking sound
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.thinking_sound), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.thinking_sound_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Switch(checked = thinkingSoundEnabled, onCheckedChange = { thinkingSoundEnabled = it })
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // --- Conversation card ---
+            Text(
+                text = stringResource(R.string.conversation_section),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -485,20 +742,6 @@ fun SettingsScreen(
                         steps = 4,
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
-                    // Thinking sound
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.thinking_sound), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.thinking_sound_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(checked = thinkingSoundEnabled, onCheckedChange = { thinkingSoundEnabled = it })
-                    }
                 }
             }
 
@@ -574,6 +817,53 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === SUPPORT SECTION ===
+            Text(
+                text = stringResource(R.string.support_section),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.report_issue),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = stringResource(R.string.report_issue_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings)
+                            val body = "\n\n$systemInfo"
+                            val uri = Uri.parse("https://github.com/yuga-hashimoto/openclaw-assistant/issues/new")
+                                .buildUpon()
+                                .appendQueryParameter("body", body)
+                                .build()
+                            val intent = Intent(Intent.ACTION_VIEW, uri)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.BugReport, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.report_issue))
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
@@ -582,4 +872,24 @@ fun SettingsScreen(
 data class TestResult(
     val success: Boolean,
     val message: String
+)
+
+// Fallback language list used when device query fails
+private val FALLBACK_SPEECH_LANGUAGES = listOf(
+    "en-US" to "English (US)",
+    "en-GB" to "English (UK)",
+    "ja-JP" to "日本語",
+    "it-IT" to "Italiano",
+    "fr-FR" to "Français",
+    "de-DE" to "Deutsch",
+    "es-ES" to "Español",
+    "pt-BR" to "Português (Brasil)",
+    "ko-KR" to "한국어",
+    "zh-CN" to "中文 (简体)",
+    "zh-TW" to "中文 (繁體)",
+    "ar-SA" to "العربية",
+    "hi-IN" to "हिन्दी",
+    "ru-RU" to "Русский",
+    "th-TH" to "ไทย",
+    "vi-VN" to "Tiếng Việt"
 )

@@ -4,6 +4,8 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("kotlin-kapt")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 // Load local.properties
@@ -46,8 +48,8 @@ android {
         applicationId = "com.openclaw.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 89  // v1.2.4
-        versionName = "1.2.4"
+        versionCode = getTagVersionCode()
+        versionName = getTagName()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -144,7 +146,11 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
     // Vosk
-    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // Tink (Crypto)
+    implementation("com.google.crypto.tink:tink-android:1.10.0")
+
     
     // Image Loading (Compose)
     implementation("io.coil-kt:coil-compose:2.6.0")
@@ -169,4 +175,9 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
+
+    // Firebase
+    implementation(platform("com.google.firebase:firebase-bom:32.7.4"))
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-analytics")
 }

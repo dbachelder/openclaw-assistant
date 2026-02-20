@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
@@ -23,16 +24,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -59,7 +66,7 @@ import com.openclaw.assistant.ui.chat.ChatMessage
 import com.openclaw.assistant.ui.components.MarkdownText
 import com.openclaw.assistant.ui.chat.ChatUiState
 import com.openclaw.assistant.ui.chat.ChatViewModel
-import com.openclaw.assistant.gateway.ConnectionState
+import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.launch
@@ -177,8 +184,10 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val uiState by viewModel.uiState.collectAsState()
                 val allSessions by viewModel.allSessions.collectAsState()
                 val currentSessionId by viewModel.currentSessionId.collectAsState()
+                val prefillText = intent.getStringExtra("EXTRA_PREFILL_TEXT") ?: ""
 
                 ChatScreen(
+                    initialText = prefillText,
                     uiState = uiState,
                     allSessions = allSessions,
                     currentSessionId = currentSessionId,
@@ -198,7 +207,6 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                             viewModel.interruptAndListen()
                         }
                     },
-                    onStopGeneration = { viewModel.stopGeneration() },
                     onBack = { finish() },
                     onSelectSession = { viewModel.selectSession(it) },
                     onCreateSession = { viewModel.createNewSession() },
@@ -207,7 +215,8 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onGalleryClick = { onGalleryClick() },
                     onFileClick = { onFileClick() },
                     onRemoveAttachment = { viewModel.clearPendingAttachment() },
-                    hasCamera = hasCamera
+                    hasCamera = hasCamera,
+                    onAgentSelected = { viewModel.setAgent(it) }
                 )
             }
         }
@@ -233,7 +242,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         Log.e(TAG, "TTS onInit callback, status=$status (SUCCESS=${TextToSpeech.SUCCESS})")
         if (status == TextToSpeech.SUCCESS) {
-            TTSUtils.setupVoice(tts, settings.ttsSpeed)
+            TTSUtils.setupVoice(tts, settings.ttsSpeed, settings.speechLanguage.ifEmpty { null })
             
             // Pass TTS to ViewModel
             tts?.let { viewModel.setTTS(it) }
@@ -289,6 +298,7 @@ sealed interface ChatListItem {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
+    initialText: String = "",
     uiState: ChatUiState,
     allSessions: List<com.openclaw.assistant.data.local.entity.SessionEntity>,
     currentSessionId: String?,
@@ -297,7 +307,6 @@ fun ChatScreen(
     onStopListening: () -> Unit,
     onStopSpeaking: () -> Unit,
     onInterruptAndListen: () -> Unit,
-    onStopGeneration: () -> Unit,
     onBack: () -> Unit,
     onSelectSession: (String) -> Unit,
     onCreateSession: () -> Unit,
@@ -306,9 +315,10 @@ fun ChatScreen(
     onGalleryClick: () -> Unit = {},
     onFileClick: () -> Unit = {},
     onRemoveAttachment: () -> Unit = {},
-    hasCamera: Boolean = true
+    hasCamera: Boolean = true,
+    onAgentSelected: (String?) -> Unit = {}
 ) {
-    var inputText by remember { mutableStateOf("") }
+    var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -336,8 +346,8 @@ fun ChatScreen(
         items
     }
 
-    // Scroll to bottom when new messages arrive or streaming updates
-    LaunchedEffect(groupedItems.size, uiState.streamingContent) {
+    // Scroll to bottom when new messages arrive
+    LaunchedEffect(groupedItems.size) {
         if (groupedItems.isNotEmpty()) {
             listState.animateScrollToItem(groupedItems.size - 1)
         }
@@ -412,13 +422,24 @@ fun ChatScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                stringResource(R.string.app_name),
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        val sessionTitle = allSessions.find { it.id == currentSessionId }?.title
+                            ?: stringResource(R.string.new_chat)
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    sessionTitle,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                            AgentSelector(
+                                agents = uiState.availableAgents,
+                                selectedAgentId = uiState.selectedAgentId,
+                                defaultAgentId = uiState.defaultAgentId,
+                                onAgentSelected = onAgentSelected
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            ConnectionIndicator(uiState.connectionState)
                         }
                     },
                     navigationIcon = {
@@ -487,46 +508,42 @@ fun ChatScreen(
                 }
             }
         ) { paddingValues ->
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
-            ) {
-                 items(groupedItems) { item ->
-                    when (item) {
-                        is ChatListItem.DateSeparator -> {
-                            DateHeader(item.dateText)
+            Column(modifier = Modifier.padding(paddingValues)) {
+                // Pairing Guidance
+                if (uiState.isPairingRequired && uiState.deviceId != null) {
+                    Box(modifier = Modifier.padding(16.dp)) {
+                        PairingRequiredCard(deviceId = uiState.deviceId!!)
+                    }
+                }
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
+                ) {
+                     items(groupedItems) { item ->
+                        when (item) {
+                            is ChatListItem.DateSeparator -> {
+                                DateHeader(item.dateText)
+                            }
+                            is ChatListItem.MessageItem -> {
+                                MessageBubble(message = item.message)
+                            }
                         }
-                        is ChatListItem.MessageItem -> {
-                            MessageBubble(message = item.message)
+                    }
+                    
+                    if (uiState.isThinking) {
+                        item {
+                            ThinkingIndicator()
                         }
                     }
-                }
-                
-                if (uiState.isThinking) {
-                    item {
-                        ThinkingIndicator()
-                    }
-                }
-                if (uiState.isStreaming && !uiState.streamingContent.isNullOrBlank()) {
-                    item {
-                        StreamingBubble(
-                            text = uiState.streamingContent,
-                            onStop = onStopGeneration
-                        )
-                    }
-                } else if (uiState.isStreaming) {
-                    item {
-                        StreamingIndicator(onStop = onStopGeneration)
-                    }
-                }
-                if (uiState.isSpeaking) {
-                    item {
-                        SpeakingIndicator(onStop = onStopSpeaking)
+                    if (uiState.isSpeaking) {
+                        item {
+                            SpeakingIndicator(onStop = onStopSpeaking)
+                        }
                     }
                 }
             }
@@ -594,40 +611,41 @@ fun MessageBubble(message: ChatMessage) {
                 shape = shape,
                 modifier = Modifier.widthIn(max = 300.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    if (message.attachmentUri != null) {
-                        if (message.attachmentMimeType?.startsWith("image/") == true) {
-                            AsyncImage(
-                                model = message.attachmentUri,
-                                contentDescription = stringResource(R.string.attached_image),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 200.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            if (message.text.isNotBlank()) Spacer(modifier = Modifier.height(8.dp))
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.InsertDriveFile,
-                                    contentDescription = null,
-                                    tint = contentColor,
-                                    modifier = Modifier.size(20.dp)
+                SelectionContainer {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        if (message.attachmentUri != null) {
+                            if (message.attachmentMimeType?.startsWith("image/") == true) {
+                                AsyncImage(
+                                    model = message.attachmentUri,
+                                    contentDescription = stringResource(R.string.attached_image),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 200.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = message.attachmentFileName ?: stringResource(android.R.string.untitled),
-                                    color = contentColor,
-                                    fontSize = 14.sp
-                                )
+                                if (message.text.isNotBlank()) Spacer(modifier = Modifier.height(8.dp))
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.InsertDriveFile,
+                                        contentDescription = null,
+                                        tint = contentColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = message.attachmentFileName ?: stringResource(android.R.string.untitled),
+                                        color = contentColor,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
                         }
-                    }
-                    if (message.text.isNotBlank()) {
+                        if (message.text.isNotBlank()) {
                         if (isUser) {
                             Text(
                                 text = message.text,
@@ -712,102 +730,79 @@ fun SpeakingIndicator(onStop: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectionIndicator(state: ConnectionState) {
-    val (color, label) = when (state) {
-        ConnectionState.CONNECTED -> Color(0xFF4CAF50) to R.string.connection_status_connected
-        ConnectionState.CONNECTING, ConnectionState.RECONNECTING -> Color(0xFFFFC107) to R.string.connection_status_reconnecting
-        ConnectionState.DISCONNECTED -> Color(0xFF9E9E9E) to R.string.connection_status_http
+fun AgentSelector(
+    agents: List<AgentInfo>,
+    selectedAgentId: String?,
+    defaultAgentId: String = "main",
+    onAgentSelected: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val effectiveId = selectedAgentId ?: defaultAgentId
+    val selectedAgent = agents.find { it.id == effectiveId }
+    
+    // Determine display name
+    val displayName = if (selectedAgent != null) {
+        selectedAgent.name
+    } else {
+        if (effectiveId == "main" || effectiveId.isBlank()) stringResource(R.string.agent_default)
+        else effectiveId
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color)
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = if (state == ConnectionState.CONNECTED) "WS" else if (state == ConnectionState.DISCONNECTED) "HTTP" else "...",
-            fontSize = 10.sp,
-            color = color
-        )
-    }
-}
 
-@Composable
-fun StreamingBubble(text: String, onStop: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Column(horizontalAlignment = Alignment.Start) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
-                modifier = Modifier.widthIn(max = 300.dp)
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable { if (agents.isNotEmpty()) expanded = true }
+                .padding(vertical = 4.dp, horizontal = 4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.SmartToy,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (agents.isNotEmpty()) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    MarkdownText(
-                        markdown = text,
-                        color = MaterialTheme.colorScheme.onSurface
+                agents.forEach { agent ->
+                    DropdownMenuItem(
+                        text = { Text(agent.name) },
+                        onClick = {
+                            onAgentSelected(agent.id)
+                            expanded = false
+                        },
+                        leadingIcon = {
+                            if (agent.id == effectiveId) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     )
                 }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            TextButton(
-                onClick = onStop,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-            ) {
-                Icon(
-                    Icons.Default.Stop,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.error
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    stringResource(R.string.stop_generation),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun StreamingIndicator(onStop: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(vertical = 8.dp)
-                .background(MaterialTheme.colorScheme.surface, CircleShape)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.streaming_response),
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(onClick = onStop, modifier = Modifier.size(24.dp)) {
-                Icon(
-                    Icons.Default.Stop,
-                    contentDescription = stringResource(R.string.stop_generation),
-                    tint = MaterialTheme.colorScheme.error
-                )
             }
         }
     }
@@ -854,8 +849,8 @@ fun ChatInputArea(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface
             ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { if (value.isNotBlank() || hasAttachment) onSend() })
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+            // keyboardActions removed to allow newline on Enter
         )
 
         val fabColor = when {
