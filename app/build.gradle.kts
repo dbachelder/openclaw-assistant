@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 plugins {
     id("com.android.application")
@@ -90,6 +91,14 @@ android {
             )
             signingConfig = signingConfigs.getByName("release")
         }
+        create("pr") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".test"
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            resValue("string", "app_name", "OpenClaw Assistant Test")
+            matchingFallbacks += listOf("release")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -116,6 +125,15 @@ android {
 
     lint {
         lintConfig = file("lint.xml")
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("pr")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(1)
+            output.versionName.set("test")
+        }
     }
 }
 
