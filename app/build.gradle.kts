@@ -80,7 +80,6 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            resValue("string", "app_name", "Debug-OpenClawAssistant")
         }
         release {
             isMinifyEnabled = true
