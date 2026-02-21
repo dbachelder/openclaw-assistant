@@ -92,12 +92,13 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
         create("pr") {
-            initWith(getByName("release"))
+            // Keep PR artifacts installable and easy to run locally.
+            initWith(getByName("debug"))
             applicationIdSuffix = ".test"
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             resValue("string", "app_name", "OpenClaw Assistant Test")
-            matchingFallbacks += listOf("release")
+            matchingFallbacks += listOf("debug")
         }
     }
     compileOptions {
