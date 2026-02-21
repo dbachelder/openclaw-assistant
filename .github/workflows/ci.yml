@@ -40,26 +40,31 @@ jobs:
                 "client_info": {
                   "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
                   "android_client_info": {
+                    "package_name": "com.openclaw.assistant"
+                  }
+                },
+                "api_key": [{ "current_key": "mock-api-key" }],
+                "services": { "analytics_service": { "status": 1 }, "appinvite_service": { "status": 1, "other_platform_oauth_client": [] }, "ads_service": { "status": 2 } }
+              },
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000001",
+                  "android_client_info": {
+                    "package_name": "com.openclaw.assistant.debug"
+                  }
+                },
+                "api_key": [{ "current_key": "mock-api-key" }],
+                "services": { "analytics_service": { "status": 1 }, "appinvite_service": { "status": 1, "other_platform_oauth_client": [] }, "ads_service": { "status": 2 } }
+              },
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000002",
+                  "android_client_info": {
                     "package_name": "com.openclaw.assistant.test"
                   }
                 },
-                "api_key": [
-                  {
-                    "current_key": "mock-api-key"
-                  }
-                ],
-                "services": {
-                  "analytics_service": {
-                    "status": 1
-                  },
-                  "appinvite_service": {
-                    "status": 1,
-                    "other_platform_oauth_client": []
-                  },
-                  "ads_service": {
-                    "status": 2
-                  }
-                }
+                "api_key": [{ "current_key": "mock-api-key" }],
+                "services": { "analytics_service": { "status": 1 }, "appinvite_service": { "status": 1, "other_platform_oauth_client": [] }, "ads_service": { "status": 2 } }
               }
             ],
             "configuration_version": "1"
