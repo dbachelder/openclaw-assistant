@@ -66,6 +66,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.ui.GatewayTrustDialog
 
 private const val TAG = "ChatActivity"
 
@@ -137,7 +138,9 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onSelectSession = { viewModel.selectSession(it) },
                     onCreateSession = { viewModel.createNewSession() },
                     onDeleteSession = { viewModel.deleteSession(it) },
-                    onAgentSelected = { viewModel.setAgent(it) }
+                    onAgentSelected = { viewModel.setAgent(it) },
+                    onAcceptGatewayTrust = { viewModel.acceptGatewayTrust() },
+                    onDeclineGatewayTrust = { viewModel.declineGatewayTrust() }
                 )
             }
         }
@@ -232,7 +235,9 @@ fun ChatScreen(
     onSelectSession: (String) -> Unit,
     onCreateSession: () -> Unit,
     onDeleteSession: (String) -> Unit,
-    onAgentSelected: (String?) -> Unit = {}
+    onAgentSelected: (String?) -> Unit = {},
+    onAcceptGatewayTrust: () -> Unit = {},
+    onDeclineGatewayTrust: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
@@ -413,6 +418,15 @@ fun ChatScreen(
             }
         ) { paddingValues ->
             Column(modifier = Modifier.padding(paddingValues)) {
+                // Gateway TLS Trust prompt
+                if (uiState.pendingGatewayTrust != null) {
+                    GatewayTrustDialog(
+                        prompt = uiState.pendingGatewayTrust,
+                        onAccept = onAcceptGatewayTrust,
+                        onDecline = onDeclineGatewayTrust
+                    )
+                }
+
                 // Pairing Guidance
                 if (uiState.isPairingRequired && uiState.deviceId != null) {
                     Box(modifier = Modifier.padding(16.dp)) {

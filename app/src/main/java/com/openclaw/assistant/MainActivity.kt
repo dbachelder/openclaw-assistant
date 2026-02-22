@@ -58,6 +58,7 @@ import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.service.HotwordService
 import com.openclaw.assistant.service.NodeForegroundService
 import com.openclaw.assistant.service.OpenClawAssistantService
+import com.openclaw.assistant.ui.GatewayTrustDialog
 import com.openclaw.assistant.speech.TTSUtils
 import com.openclaw.assistant.speech.diagnostics.DiagnosticStatus
 import com.openclaw.assistant.speech.diagnostics.VoiceDiagnostic
@@ -382,6 +383,7 @@ fun MainScreen(
     val deviceId = gatewayClient.deviceId
     val nodeDeviceId = runtime.deviceId
     val displayName by runtime.displayName.collectAsState()
+    val pendingGatewayTrust by runtime.pendingGatewayTrust.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -449,6 +451,13 @@ fun MainScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            if (pendingGatewayTrust != null) {
+                GatewayTrustDialog(
+                    prompt = pendingGatewayTrust!!,
+                    onAccept = { runtime.acceptGatewayTrustPrompt() },
+                    onDecline = { runtime.declineGatewayTrustPrompt() }
+                )
+            }
             // Show alert if missing scope error is present
             if (missingScopeError != null) {
                 MissingScopeCard(error = missingScopeError!!, onClick = onOpenSettings)

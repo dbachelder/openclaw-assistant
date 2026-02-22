@@ -24,6 +24,7 @@ import com.openclaw.assistant.gateway.GatewayEndpoint
 import com.openclaw.assistant.gateway.GatewaySession
 import com.openclaw.assistant.gateway.probeGatewayTlsFingerprint
 import com.openclaw.assistant.protocol.OpenClawCanvasA2UIAction
+import com.openclaw.assistant.R
 
 
 import kotlinx.coroutines.CoroutineScope
@@ -545,10 +546,10 @@ class NodeRuntime(context: Context) {
     val tls = connectionManager.resolveTlsParams(endpoint)
     if (tls?.required == true && tls.expectedFingerprint.isNullOrBlank()) {
       // First-time TLS: capture fingerprint, ask user to verify out-of-band, then store and connect.
-      _statusText.value = "Verify gateway TLS fingerprint…"
+      _statusText.value = appContext.getString(R.string.state_verify_fingerprint)
       scope.launch {
         val fp = probeGatewayTlsFingerprint(endpoint.host, endpoint.port) ?: run {
-          _statusText.value = "Failed: can't read TLS fingerprint"
+          _statusText.value = appContext.getString(R.string.state_failed_fingerprint)
           return@launch
         }
         _pendingGatewayTrust.value = GatewayTrustPrompt(endpoint = endpoint, fingerprintSha256 = fp)

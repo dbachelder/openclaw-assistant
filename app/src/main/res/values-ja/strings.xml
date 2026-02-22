@@ -298,7 +298,8 @@
     <string name="status_offline">オフライン</string>
 
     <!-- Gateway Trust Dialog -->
-    <string name="gateway_trust_title">ゲートウェイ証明書の確認</string>
+    <string name="gateway_trust_title">このゲートウェイを信頼しますか？</string>
+    <string name="gateway_trust_message">初回TLS接続です。\n\n接続を信頼する前に、以下のSHA-256フィンガープリントを他の手段で確認してください：\n%s</string>
     <string name="gateway_trust_confirm">信頼して接続</string>
     <string name="gateway_fingerprint_label">SHA-256 フィンガープリント:</string>
 
@@ -314,4 +315,6 @@
     <string name="wake_word_node_always">常時</string>
     <string name="wake_word_node_always_desc">バックグラウンドでも検出します（常駐通知を使用）。</string>
     <string name="wake_word_classic_title">クラシックモード（音声オーバーレイ）</string>
+    <string name="state_verify_fingerprint">ゲートウェイ証明書を確認中…</string>
+    <string name="state_failed_fingerprint">失敗: 証明書を読み込めませんでした</string>
 </resources>

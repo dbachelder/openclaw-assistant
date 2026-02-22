@@ -4,6 +4,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import com.openclaw.assistant.R
 import com.openclaw.assistant.node.NodeRuntime
 
 @Composable
@@ -14,22 +16,23 @@ fun GatewayTrustDialog(
 ) {
   AlertDialog(
     onDismissRequest = onDecline,
-    title = { Text("Trust this gateway?") },
+    title = { Text(stringResource(R.string.gateway_trust_title)) },
     text = {
       Text(
-        "First-time TLS connection.\n\n" +
-          "Verify this SHA-256 fingerprint out-of-band before trusting:\n" +
-          prompt.fingerprintSha256,
+          stringResource(
+              R.string.gateway_trust_message,
+              prompt.fingerprintSha256
+          )
       )
     },
     confirmButton = {
       TextButton(onClick = onAccept) {
-        Text("Trust and connect")
+        Text(stringResource(R.string.gateway_trust_confirm))
       }
     },
     dismissButton = {
       TextButton(onClick = onDecline) {
-        Text("Cancel")
+        Text(stringResource(R.string.cancel))
       }
     },
   )
