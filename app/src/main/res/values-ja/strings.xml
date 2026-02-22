@@ -40,6 +40,9 @@
     <string name="home_button">ホームボタン</string>
     <string name="active">有効</string>
     <string name="not_set">未設定</string>
+    <string name="hotword_title">ウェイクワード: %s</string>
+    <string name="hotword_listening">検知中…</string>
+    <string name="hotword_tap_to_enable">タップで有効化</string>
     <string name="disabled">無効</string>
     <string name="open_chat">チャットを開く</string>
     <string name="setup_required">設定が必要</string>
@@ -143,6 +146,14 @@
     <!-- Error Messages -->
     <string name="error_speech_input_timeout">音声入力がありませんでした</string>
 
+    <!-- Operator Offline Warning -->
+    <string name="operator_offline_title">オペレーターオフライン / 権限が必要</string>
+    <string name="operator_offline_message">デバイスは接続済みですが、AIに操作権限がありません。\n\nサーバーで以下のコマンドを実行してアクセスを許可してください：</string>
+    <string name="operator_offline_command">openclaw devices approve %s</string>
+    <string name="operator_offline_copy">コマンドをコピー</string>
+    <string name="operator_offline_copied">コマンドをコピーしました</string>
+    <string name="operator_offline_action">サーバーで実行</string>
+
     <!-- Permission Errors -->
     <string name="permission_error_title">エージェント選択が利用できません</string>
     <string name="permission_error_desc">\'operator.read\'権限がないため、エージェントリストを読み込めません。</string>
@@ -179,4 +190,128 @@
     <string name="support_section">サポート</string>
     <string name="report_issue">問題を報告</string>
     <string name="report_issue_desc">バグの報告や機能のリクエストはこちらから（GitHub）</string>
+
+    <!-- Device Node & Capabilities -->
+    <string name="capabilities_title">デバイス機能</string>
+    <string name="capability_camera">カメラ</string>
+    <string name="capability_talk">会話</string>
+    <string name="capability_location">位置情報</string>
+    <string name="diagnostics_title">診断</string>
+    <string name="setup_required_hint">設定画面で接続設定を行ってください</string>
+
+    <!-- Gateway Settings -->
+    <string name="settings_gateway_title">Gateway接続</string>
+    <string name="disconnected">未接続</string>
+    <string name="offline">オフライン</string>
+    <string name="gateway_discovery_active">Gatewayを検索中...</string>
+    <string name="gateway_manual_connection">手動接続</string>
+    <string name="gateway_manual_desc">特定のホスト/ポートに接続</string>
+    <string name="gateway_host">ホスト</string>
+    <string name="gateway_port">ポート</string>
+    <string name="gateway_port_error">無効なポート番号</string>
+    <string name="gateway_token">トークン</string>
+    <string name="gateway_use_tls">TLSを使用</string>
+    <string name="gateway_invalid_params">ホストまたはポートが無効です</string>
+    <string name="gateway_settings_applied">設定を適用しました</string>
+    <string name="apply">適用</string>
+    <string name="disconnect">切断</string>
+    <string name="gateway_discovery_hint">Gatewayを検索中...</string>
+    <string name="gateway_connecting">接続中…</string>
+    <string name="connect">接続</string>
+    <string name="gateway_foreground_service">フォアグラウンドサービス</string>
+    <string name="gateway_foreground_desc">バックグラウンド実行を維持</string>
+    <string name="gateway_use_node_chat">Gateway Chatを使用</string>
+    <string name="gateway_use_node_chat_desc">Gateway経由でチャットを行う</string>
+
+    <!-- Legacy Settings -->
+    <string name="settings_legacy_title">レガシー接続 (Webhook)</string>
+    <string name="settings_legacy_desc">Gatewayを使用せずLLM APIに直接接続</string>
+
+    <!-- Missing translations (EN strings not previously in JA) -->
+    <string name="state_ready">準備完了</string>
+    <string name="state_listening">聴いています...</string>
+    <string name="state_processing">処理中...</string>
+    <string name="state_thinking">考え中...</string>
+    <string name="state_speaking">話しています...</string>
+    <string name="state_error">エラー</string>
+    <string name="action_try_again">再試行</string>
+    <string name="config_required">設定が必要です</string>
+    <string name="error_config_required">Webhook URLを設定してください</string>
+    <string name="error_speech_general">音声エラー</string>
+    <string name="error_speech_audio">音声入力エラー</string>
+    <string name="error_speech_client">クライアントエラー</string>
+    <string name="error_speech_server">サーバーエラー</string>
+    <string name="error_speech_network">ネットワークエラー</string>
+    <string name="error_speech_timeout">タイムアウト</string>
+    <string name="error_speech_no_match">一致する音声なし</string>
+    <string name="error_speech_busy">音声認識サービスが混雑しています - 再試行中</string>
+    <string name="error_speech_permissions">権限が不足しています</string>
+    <string name="error_speech_unknown">不明なエラー (%d)</string>
+    <string name="error_no_recognition_result">認識結果がありません</string>
+    <string name="error_no_response">応答がありません</string>
+    <string name="error_start_failed">起動エラー: %s</string>
+    <string name="permissions_missing_title">権限が必要です</string>
+    <string name="permission_grant">許可</string>
+    <string name="permission_record_audio">マイク</string>
+    <string name="permission_record_audio_desc">音声入力とウェイクワード検知に必要</string>
+    <string name="permission_post_notifications">通知</string>
+    <string name="permission_post_notifications_desc">ホットワードサービスのステータス表示に必要</string>
+    <string name="notification_mic_permission_title">マイクの権限が必要です</string>
+    <string name="notification_mic_permission_content">タップしてウェイクワード検知の権限を許可</string>
+
+    <!-- Capability Cards (SMS & Screen) -->
+    <string name="capability_sms">SMS</string>
+    <string name="capability_screen">画面録画</string>
+    <string name="capability_on">ON</string>
+    <string name="capability_off">OFF</string>
+    <string name="capability_screen_active">録画中</string>
+
+    <!-- Screen Capture Explain Dialog -->
+    <string name="screen_capture_explain_title">画面キャプチャ</string>
+    <string name="screen_capture_explain_message">画面キャプチャを使うと、依頼時にAIが画面を確認できます。セッションごとに権限が必要です。明示的に依頼した場合のみキャプチャされます。</string>
+
+    <!-- SMS Permission -->
+    <string name="permission_send_sms">SMS</string>
+    <string name="permission_send_sms_desc">AIがテキストメッセージを送信するために必要</string>
+
+    <!-- Canvas Debug Mode -->
+    <string name="canvas_debug_mode">Canvasデバッグオーバーレイ</string>
+    <string name="canvas_debug_mode_desc">Canvas画面に接続ステータスのオーバーレイを表示</string>
+
+    <!-- Wake Word Sync -->
+    <string name="wake_word_sync_from_server">サーバーから同期</string>
+    <string name="wake_word_sync_success">ウェイクワードを同期しました</string>
+    <string name="wake_word_sync_failed">同期に失敗しました</string>
+
+    <!-- Location Mode Info -->
+    <string name="location_off">OFF</string>
+    <string name="location_coarse">大まか</string>
+    <string name="location_precise">精密（GPS）</string>
+    <string name="location_info_title">位置情報の精度モード</string>
+    <string name="location_info_message">OFF: AIは位置情報にアクセスできません。\n\n大まか: 市区町村レベル。バッテリー消費少。\n\n精密: GPS精度。バッテリー消費多。\n\nこのカードを長押しすると再確認できます。</string>
+
+    <!-- App Version -->
+    <string name="app_version">バージョン %s</string>
+
+    <!-- Status Indicators -->
+    <string name="status_online">オンライン</string>
+    <string name="status_offline">オフライン</string>
+
+    <!-- Gateway Trust Dialog -->
+    <string name="gateway_trust_title">ゲートウェイ証明書の確認</string>
+    <string name="gateway_trust_confirm">信頼して接続</string>
+    <string name="gateway_fingerprint_label">SHA-256 フィンガープリント:</string>
+
+    <!-- Error Messages -->
+    <string name="gateway_not_connected">ゲートウェイに接続されていません</string>
+    <string name="agents_fetch_failed">接続済みですが、エージェントの取得に失敗しました</string>
+
+    <!-- Wake Word Mode (Settings) -->
+    <string name="wake_word_node_title">ゲートウェイ・ウェイクワード</string>
+    <string name="wake_word_node_desc">ウェイクワードを検出してAIゲートウェイにリクエストを送ります。</string>
+    <string name="wake_word_node_foreground">アプリ起動中のみ</string>
+    <string name="wake_word_node_foreground_desc">OpenClawが開いている間のみ検出します。</string>
+    <string name="wake_word_node_always">常時</string>
+    <string name="wake_word_node_always_desc">バックグラウンドでも検出します（常駐通知を使用）。</string>
+    <string name="wake_word_classic_title">クラシックモード（音声オーバーレイ）</string>
 </resources>

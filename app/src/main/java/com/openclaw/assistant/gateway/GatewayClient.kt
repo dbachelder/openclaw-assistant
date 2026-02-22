@@ -39,6 +39,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import kotlin.math.min
 import kotlin.math.pow
+import com.openclaw.assistant.chat.ChatSessionEntry
 
 /**
  * Simplified WebSocket gateway client for OpenClaw.
@@ -248,6 +249,57 @@ class GatewayClient(context: android.content.Context) {
             request("health", null, timeoutMs = 5_000)
             true
         } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Fetch the list of sessions from the gateway.
+     */
+    suspend fun getSessions(limit: Int? = null): List<ChatSessionEntry>? {
+        val params = JsonObject().apply {
+            addProperty("includeGlobal", true)
+            addProperty("includeUnknown", false)
+            if (limit != null && limit > 0) addProperty("limit", limit)
+        }
+        return try {
+            val result = request("sessions.list", params)
+            parseSessions(result.payload)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get sessions: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Delete a session on the gateway.
+     */
+    suspend fun deleteSession(sessionKey: String): Boolean {
+        val params = JsonObject().apply {
+            addProperty("key", sessionKey)
+        }
+        return try {
+            val result = request("sessions.delete", params)
+            result.ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete session: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Patch a session on the gateway to update its label or other properties.
+     */
+    suspend fun patchSession(sessionKey: String, label: String? = null): Boolean {
+        val params = JsonObject().apply {
+            addProperty("key", sessionKey)
+            if (label != null) addProperty("label", label)
+        }
+        return try {
+            val result = request("sessions.patch", params)
+            result.ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to patch session: ${e.message}")
             false
         }
     }
@@ -608,6 +660,21 @@ class GatewayClient(context: android.content.Context) {
             ChatHistoryMessage(role = role, content = text, timestampMs = ts)
         }
         return ChatHistoryResult(sessionId, messages)
+    }
+
+    // --- Internal: Session list parsing ---
+
+    private fun parseSessions(payload: JsonObject?): List<ChatSessionEntry>? {
+        if (payload == null) return null
+        val sessionsArray = payload.getAsJsonArray("sessions") ?: return emptyList()
+        return sessionsArray.mapNotNull { item ->
+            val obj = item.asJsonObject ?: return@mapNotNull null
+            val key = obj.get("key")?.asString?.trim() ?: return@mapNotNull null
+            if (key.isEmpty()) return@mapNotNull null
+            val updatedAt = obj.get("updatedAt")?.asLong
+            val displayName = obj.get("displayName")?.asString?.trim()
+            ChatSessionEntry(key = key, updatedAtMs = updatedAt, displayName = displayName)
+        }
     }
 
     // --- Internal: WebSocket Listener ---

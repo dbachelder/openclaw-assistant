@@ -71,6 +71,11 @@ private const val TAG = "ChatActivity"
 
 class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
+    companion object {
+        const val EXTRA_SESSION_ID = "extra_session_id"
+        const val EXTRA_SESSION_TITLE = "extra_session_title"
+    }
+
     private val viewModel: ChatViewModel by viewModels()
     private var tts: TextToSpeech? = null
     private var isRetry = false

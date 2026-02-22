@@ -64,6 +64,9 @@
     <string name="home_button">Home Button</string>
     <string name="active">Active</string>
     <string name="not_set">Not Set</string>
+    <string name="hotword_title">Wake Word: %s</string>
+    <string name="hotword_listening">Listening…</string>
+    <string name="hotword_tap_to_enable">Tap to enable</string>
     <string name="disabled">Disabled</string>
     <string name="open_chat">Open Chat</string>
     <string name="setup_required">Setup Required</string>
@@ -162,6 +165,22 @@
     <string name="menu">Menu</string>
     <string name="back">Back</string>
 
+    <!-- Session List -->
+    <string name="no_sessions">No conversations yet. Tap + to start a new one.</string>
+    <string name="session_name_label">Name</string>
+    <string name="session_name_hint">e.g. Work, Travel, Study</string>
+    <string name="create">Create</string>
+    <string name="delete_session_title">Delete conversation?</string>
+    <string name="delete_session_message">"%s" will be permanently deleted.</string>
+
+    <!-- Operator Offline Warning -->
+    <string name="operator_offline_title">Operator Offline / Permission Needed</string>
+    <string name="operator_offline_message">Your device is connected, but the AI lacks permission to operate it.\n\nPlease run the following command on your server to grant operator access:</string>
+    <string name="operator_offline_command">openclaw devices approve %s</string>
+    <string name="operator_offline_copy">Copy Command</string>
+    <string name="operator_offline_copied">Command copied to clipboard</string>
+    <string name="operator_offline_action">Run on server</string>
+
     <!-- Permission Errors -->
     <string name="permission_error_title">Agent Selection Unavailable</string>
     <string name="permission_error_desc">Agent list cannot be loaded without \'operator.read\' scope.</string>
@@ -211,4 +230,106 @@
     <string name="support_section">Support</string>
     <string name="report_issue">Report Issue</string>
     <string name="report_issue_desc">Found a bug or have a feature request? Let us know on GitHub.</string>
+
+    <!-- Device Node & Capabilities -->
+    <string name="capabilities_title">Capabilities</string>
+    <string name="capability_camera">Camera</string>
+    <string name="capability_talk">Talk</string>
+    <string name="capability_location">Location</string>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="setup_required_hint">Please configure connection in Settings</string>
+
+    <!-- Gateway Settings -->
+    <string name="settings_gateway_title">Gateway Connection</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="offline">Offline</string>
+    <string name="gateway_discovery_active">Discovery active...</string>
+    <string name="gateway_manual_connection">Manual Connection</string>
+    <string name="gateway_manual_desc">Connect to specific host/port</string>
+    <string name="gateway_host">Host</string>
+    <string name="gateway_port">Port</string>
+    <string name="gateway_port_error">Invalid port</string>
+    <string name="gateway_token">Token</string>
+    <string name="gateway_use_tls">Use TLS</string>
+    <string name="gateway_invalid_params">Invalid host or port</string>
+    <string name="gateway_settings_applied">Settings applied</string>
+    <string name="apply">Apply</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="gateway_discovery_hint">Searching for gateway...</string>
+    <string name="gateway_connecting">Connecting…</string>
+    <string name="connect">Connect</string>
+    <string name="gateway_foreground_service">Foreground Service</string>
+    <string name="gateway_foreground_desc">Keep running in background</string>
+    <string name="gateway_use_node_chat">Use Gateway Chat</string>
+    <string name="gateway_use_node_chat_desc">Route chat via gateway</string>
+
+    <!-- Legacy Settings -->
+    <string name="settings_legacy_title">Legacy Connection (Webhook)</string>
+    <string name="settings_legacy_desc">Direct connection to LLM API without Gateway</string>
+
+    <!-- Capability Cards (SMS & Screen) -->
+    <string name="capability_sms">SMS</string>
+    <string name="capability_screen">Screen</string>
+    <string name="capability_on">On</string>
+    <string name="capability_off">Off</string>
+    <string name="capability_screen_active">Active</string>
+
+    <!-- Screen Capture Explain Dialog -->
+    <string name="screen_capture_explain_title">Screen Capture</string>
+    <string name="screen_capture_explain_message">Screen capture lets the AI see your screen when asked. Your permission is required each session. The AI only captures when you explicitly ask it to.</string>
+    <string name="screen_capture_title">Start Screen Capture?</string>
+    <string name="screen_capture_message">This allows the AI to record your screen and understand what you are viewing.</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+
+    <!-- SMS Permission -->
+    <string name="permission_send_sms">SMS</string>
+    <string name="permission_send_sms_desc">Required for the AI to send text messages</string>
+
+    <!-- Canvas Debug Mode -->
+    <string name="canvas_debug_mode">Canvas Debug Overlay</string>
+    <string name="canvas_debug_mode_desc">Show a connection status overlay on the canvas screen</string>
+
+    <!-- Wake Word Sync -->
+    <string name="wake_word_sync_from_server">Get Wake Words from Gateway</string>
+    <string name="wake_word_sync_desc">Download wake words configured on the gateway server to this device.</string>
+    <string name="wake_word_sync_success">Wake words synced</string>
+    <string name="wake_word_sync_failed">Sync failed</string>
+
+    <!-- Location Mode Info -->
+    <string name="location_off">Off</string>
+    <string name="location_coarse">Coarse</string>
+    <string name="location_precise">Precise</string>
+    <string name="location_info_title">Location Accuracy Modes</string>
+    <string name="location_info_message">Off: AI cannot access your location.\n\nCoarse: City/neighborhood level. Uses less battery.\n\nPrecise: GPS accuracy. Higher battery usage.\n\nLong-press this card to see this info again.</string>
+
+    <!-- App Version -->
+    <string name="app_version">Version %s</string>
+
+    <!-- Status Indicators -->
+    <string name="status_online">ONLINE</string>
+    <string name="status_offline">OFFLINE</string>
+
+    <!-- Gateway Trust Dialog -->
+    <string name="gateway_trust_title">Verify Gateway Certificate</string>
+    <string name="gateway_trust_confirm">Trust &amp; Connect</string>
+    <string name="gateway_fingerprint_label">SHA-256 Fingerprint:</string>
+
+    <!-- Error Messages -->
+    <string name="gateway_not_connected">Not connected to gateway</string>
+    <string name="agents_fetch_failed">Connected, but failed to load agents</string>
+
+    <!-- Wake Word Mode (Settings) -->
+    <string name="wake_word_node_title">Gateway Wake Word</string>
+    <string name="wake_word_node_desc">Detects your wake word and sends a request to the AI gateway.</string>
+    <string name="wake_word_gateway_desc">This device listens for your wake word and sends a command to the gateway. Enter the words you want to say to activate the assistant.</string>
+    <string name="wake_word_node_foreground">App Open</string>
+    <string name="wake_word_node_foreground_desc">Listens only while OpenClaw is open.</string>
+    <string name="wake_word_node_always">Always</string>
+    <string name="wake_word_node_always_desc">Continues listening in the background (uses a persistent notification).</string>
+    <string name="wake_word_classic_title">Vosk Mode (Voice Overlay)</string>
+    <string name="wake_word_engine_vosk">Vosk (Local)</string>
+    <string name="wake_words_label">Wake Words</string>
+    <string name="wake_words_placeholder">openclaw, claude</string>
+    <string name="wake_words_help">Comma-separated words that activate the assistant (e.g. "openclaw, claude")</string>
 </resources>
