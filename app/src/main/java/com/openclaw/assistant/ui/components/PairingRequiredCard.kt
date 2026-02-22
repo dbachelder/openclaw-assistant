@@ -26,13 +26,16 @@ import com.openclaw.assistant.R
 import com.openclaw.assistant.gateway.GatewayClient
 
 @Composable
-fun PairingRequiredCard(deviceId: String) {
+fun PairingRequiredCard(deviceId: String, displayName: String = "") {
     val context = LocalContext.current
     val gatewayClient = remember { GatewayClient.getInstance(context) }
     val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
 
-    // Command generation
-    val pythonScript = "import sys, json; print(next((r['Request'] for r in json.load(sys.stdin).get('pending', []) if r.get('Device') == '$deviceId'), 'NOT_FOUND'))"
+    // Command generation — match any field value against known identifiers (name or device ID hash).
+    // This avoids depending on specific field names that may change across openclaw versions.
+    val safeName = displayName.replace("\\", "\\\\").replace("'", "\\'")
+    val safeId = deviceId.replace("\\", "\\\\").replace("'", "\\'")
+    val pythonScript = "import sys,json;d=json.load(sys.stdin);ids={'$safeName','$safeId'};r=next((x for x in d.get('pending',[]) if any(str(v) in ids for v in x.values())),None);print(next((str(v) for k,v in (r or {}).items() if k.lower()=='request'),'NOT_FOUND'))"
     val approveCommand = "openclaw devices approve \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
     val rejectCommand = "openclaw devices reject \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
 

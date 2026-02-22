@@ -84,9 +84,13 @@ fun buildGatewayTlsConfig(
 suspend fun probeGatewayTlsFingerprint(
   host: String,
   port: Int,
-  timeoutMs: Int = 3_000,
+  timeoutMs: Int = 10_000,
 ): String? {
   val trimmedHost = host.trim()
+    .removePrefix("http://")
+    .removePrefix("https://")
+    .removeSuffix("/")
+
   if (trimmedHost.isEmpty()) return null
   if (port !in 1..65535) return null
 
@@ -104,30 +108,21 @@ suspend fun probeGatewayTlsFingerprint(
     val context = SSLContext.getInstance("TLS")
     context.init(null, arrayOf(trustAll), SecureRandom())
 
-    val socket = (context.socketFactory.createSocket() as SSLSocket)
+    // Use createSocket(host, port) to ensure SNI is set automatically by the OS.
+    var socket: SSLSocket? = null
     try {
+      socket = context.socketFactory.createSocket(trimmedHost, port) as SSLSocket
       socket.soTimeout = timeoutMs
-      socket.connect(InetSocketAddress(trimmedHost, port), timeoutMs)
-
-      // Best-effort SNI for hostnames (avoid crashing on IP literals).
-      try {
-        if (trimmedHost.any { it.isLetter() }) {
-          val params = SSLParameters()
-          params.serverNames = listOf(SNIHostName(trimmedHost))
-          socket.sslParameters = params
-        }
-      } catch (_: Throwable) {
-        // ignore
-      }
-
+      
       socket.startHandshake()
       val cert = socket.session.peerCertificates.firstOrNull() as? X509Certificate ?: return@withContext null
       sha256Hex(cert.encoded)
-    } catch (_: Throwable) {
+    } catch (e: Throwable) {
+      android.util.Log.e("GatewayTls", "Probe failed for $trimmedHost:$port", e)
       null
     } finally {
       try {
-        socket.close()
+        socket?.close()
       } catch (_: Throwable) {
         // ignore
       }

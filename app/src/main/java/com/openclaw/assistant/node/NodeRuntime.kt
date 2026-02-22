@@ -181,6 +181,9 @@ class NodeRuntime(context: Context) {
   private val _isConnected = MutableStateFlow(false)
   val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+  private val _isOperatorOffline = MutableStateFlow(false)
+  val isOperatorOffline: StateFlow<Boolean> = _isOperatorOffline.asStateFlow()
+
   private val _statusText = MutableStateFlow("Offline")
   val statusText: StateFlow<String> = _statusText.asStateFlow()
 
@@ -189,12 +192,6 @@ class NodeRuntime(context: Context) {
 
   private val _mainSessionKey = MutableStateFlow("main")
   val mainSessionKey: StateFlow<String> = _mainSessionKey.asStateFlow()
-
-  private val _isPairingRequired = MutableStateFlow(false)
-  val isPairingRequired: StateFlow<Boolean> = _isPairingRequired.asStateFlow()
-
-  val deviceId: String?
-    get() = identityStore.loadOrCreate().deviceId
 
   private val cameraHudSeq = AtomicLong(0)
   private val _cameraHud = MutableStateFlow<CameraHudState?>(null)
@@ -215,6 +212,12 @@ class NodeRuntime(context: Context) {
   private val _seamColorArgb = MutableStateFlow(DEFAULT_SEAM_COLOR_ARGB)
   val seamColorArgb: StateFlow<Long> = _seamColorArgb.asStateFlow()
 
+  private val _isPairingRequired = MutableStateFlow(false)
+  val isPairingRequired: StateFlow<Boolean> = _isPairingRequired.asStateFlow()
+
+  val deviceId: String?
+    get() = identityStore.loadOrCreate().deviceId
+
   private val _isForeground = MutableStateFlow(true)
   val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
 
@@ -232,7 +235,6 @@ class NodeRuntime(context: Context) {
       onConnected = { name, remote, mainSessionKey ->
         operatorConnected = true
         operatorStatusText = "Connected"
-        _isPairingRequired.value = false
         _serverName.value = name
         _remoteAddress.value = remote
         _seamColorArgb.value = DEFAULT_SEAM_COLOR_ARGB
@@ -244,9 +246,6 @@ class NodeRuntime(context: Context) {
       onDisconnected = { message ->
         operatorConnected = false
         operatorStatusText = message
-        if (message.contains("NOT_PAIRED") || message.contains("pairing required", ignoreCase = true)) {
-          _isPairingRequired.value = true
-        }
         _serverName.value = null
         _remoteAddress.value = null
         _seamColorArgb.value = DEFAULT_SEAM_COLOR_ARGB
@@ -264,7 +263,7 @@ class NodeRuntime(context: Context) {
       },
     )
 
-    val nodeSession =
+  private val nodeSession =
     GatewaySession(
       scope = scope,
       identityStore = identityStore,
@@ -272,7 +271,6 @@ class NodeRuntime(context: Context) {
       onConnected = { _, _, _ ->
         nodeConnected = true
         nodeStatusText = "Connected"
-        _isPairingRequired.value = false
         updateStatus()
         maybeNavigateToA2uiOnConnect()
       },
@@ -284,7 +282,12 @@ class NodeRuntime(context: Context) {
       },
       onEvent = { _, _ -> },
       onInvoke = { req ->
-        invokeDispatcher.handleInvoke(req.command, req.paramsJson)
+        val result = invokeDispatcher.handleInvoke(req.command, req.paramsJson)
+        if (!result.ok) {
+          val errorMsg = result.error?.message ?: "Unknown error"
+          reportCapabilityError(errorMsg)
+        }
+        result
       },
       onTlsFingerprint = { stableId, fingerprint ->
         prefs.saveGatewayTlsFingerprint(stableId, fingerprint)
@@ -319,6 +322,7 @@ class NodeRuntime(context: Context) {
 
   private fun updateStatus() {
     _isConnected.value = operatorConnected
+    _isOperatorOffline.value = !operatorConnected && nodeConnected
     _statusText.value =
       when {
         operatorConnected && nodeConnected -> "Connected"
@@ -357,6 +361,7 @@ class NodeRuntime(context: Context) {
   val wakeWords: StateFlow<List<String>> = prefs.wakeWords
   val voiceWakeMode: StateFlow<VoiceWakeMode> = prefs.voiceWakeMode
   val talkEnabled: StateFlow<Boolean> = prefs.talkEnabled
+  val smsEnabled: StateFlow<Boolean> = prefs.smsEnabled
   val manualEnabled: StateFlow<Boolean> = prefs.manualEnabled
   val manualHost: StateFlow<String> = prefs.manualHost
   val manualPort: StateFlow<Int> = prefs.manualPort
@@ -548,6 +553,29 @@ class NodeRuntime(context: Context) {
     prefs.setTalkEnabled(value)
   }
 
+  fun setSmsEnabled(value: Boolean) {
+    prefs.setSmsEnabled(value)
+  }
+
+  fun setScreenRecordActive(value: Boolean) {
+    _screenRecordActive.value = value
+  }
+
+  suspend fun refreshWakeWordsFromGateway() {
+    gatewayEventHandler.refreshWakeWordsFromGateway()
+  }
+
+  private val _lastCapabilityError = MutableStateFlow<String?>(null)
+  val lastCapabilityError: StateFlow<String?> = _lastCapabilityError.asStateFlow()
+
+  fun clearCapabilityError() {
+    _lastCapabilityError.value = null
+  }
+
+  internal fun reportCapabilityError(msg: String) {
+    _lastCapabilityError.value = msg
+  }
+
   fun refreshGatewayConnection() {
     val endpoint = connectedEndpoint ?: return
     val token = prefs.loadGatewayToken()
@@ -604,6 +632,7 @@ class NodeRuntime(context: Context) {
   }
 
   fun connectManual() {
+    _isPairingRequired.value = false
     val host = manualHost.value.trim()
       .removePrefix("http://")
       .removePrefix("https://")

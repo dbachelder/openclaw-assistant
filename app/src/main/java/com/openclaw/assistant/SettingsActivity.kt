@@ -122,6 +122,8 @@ fun SettingsScreen(
     val nodeConnected by runtime.isConnected.collectAsState()
     val nodeStatus by runtime.statusText.collectAsState()
     val nodeForeground by runtime.isForeground.collectAsState()
+    val voiceWakeMode by runtime.voiceWakeMode.collectAsState()
+    val voiceWakeStatusText by runtime.voiceWakeStatusText.collectAsState()
     val manualEnabledState by runtime.manualEnabled.collectAsState()
     val manualHostState by runtime.manualHost.collectAsState()
     val manualPortState by runtime.manualPort.collectAsState()
@@ -234,15 +236,266 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-            // === CONNECTION SECTION ===
-            CollapsibleSection(title = stringResource(R.string.connection), collapsible = false) {
+            // === DEVICE NODE (GATEWAY) SECTION ===
+            CollapsibleSection(
+                title = stringResource(R.string.settings_gateway_title),
+                subtitle = if (nodeConnected) nodeStatus.ifBlank { stringResource(R.string.connected) } else stringResource(R.string.disconnected),
+                initiallyExpanded = true
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        StatusIndicator(
+                            state = if (nodeConnected) ConnectionState.Connected else ConnectionState.Disconnected,
+                            label = if (nodeConnected) stringResource(R.string.connected) else stringResource(R.string.offline)
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Discovery Status
+                        if (!manualEnabledState && !nodeConnected) {
+                            Text(
+                                text = stringResource(R.string.gateway_discovery_active),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
+                        // Manual Connection Switch
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.gateway_manual_connection), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.gateway_manual_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = manualEnabledState,
+                                onCheckedChange = { runtime.setManualEnabled(it) }
+                            )
+                        }
+
+                        if (manualEnabledState) {
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            OutlinedTextField(
+                                value = manualHostInput,
+                                onValueChange = { manualHostInput = it.trim() },
+                                label = { Text(stringResource(R.string.gateway_host)) },
+                                placeholder = { Text("192.168.1.100") },
+                                leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            val portInt = manualPortInput.toIntOrNull()
+                            val isPortValid = portInt != null && portInt in 1..65535
+                            OutlinedTextField(
+                                value = manualPortInput,
+                                onValueChange = { manualPortInput = it.filter { ch -> ch.isDigit() } },
+                                label = { Text(stringResource(R.string.gateway_port)) },
+                                placeholder = { Text("18789") },
+                                leadingIcon = { Icon(Icons.Default.Numbers, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                isError = manualPortInput.isNotEmpty() && !isPortValid,
+                                supportingText = if (manualPortInput.isNotEmpty() && !isPortValid) {
+                                    { Text(stringResource(R.string.gateway_port_error)) }
+                                } else null,
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            OutlinedTextField(
+                                value = gatewayTokenInput,
+                                onValueChange = { gatewayTokenInput = it.trim() },
+                                label = { Text(stringResource(R.string.gateway_token)) },
+                                leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                        Icon(
+                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(stringResource(R.string.gateway_use_tls), style = MaterialTheme.typography.bodyLarge)
+                                Switch(
+                                    checked = manualTlsState,
+                                    onCheckedChange = { runtime.setManualTls(it) }
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        val port = manualPortInput.toIntOrNull()
+                                        if (manualHostInput.isBlank() || port == null || port !in 1..65535) {
+                                            Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            runtime.setManualHost(manualHostInput)
+                                            runtime.setManualPort(port)
+                                            runtime.setGatewayToken(gatewayTokenInput)
+                                            Toast.makeText(context, context.getString(R.string.gateway_settings_applied), Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.apply))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Connect/Disconnect Actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (nodeConnected) {
+                                OutlinedButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { runtime.disconnect() },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text(stringResource(R.string.disconnect))
+                                }
+                            } else {
+                                Button(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { 
+                                        if (manualEnabledState) {
+                                            val port = manualPortInput.toIntOrNull()
+                                            if (manualHostInput.isBlank() || port == null || port !in 1..65535) {
+                                                Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
+                                                return@Button
+                                            }
+                                            runtime.setManualHost(manualHostInput)
+                                            runtime.setManualPort(port)
+                                            runtime.setGatewayToken(gatewayTokenInput)
+                                            runtime.connectManual()
+                                            Toast.makeText(context, context.getString(R.string.gateway_connecting), Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            // Trigger discovery or auto-connect logic if available
+                                            Toast.makeText(context, context.getString(R.string.gateway_discovery_hint), Toast.LENGTH_SHORT).show()
+                                        }
+                                        if (nodeForeground) NodeForegroundService.start(context)
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.connect))
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        HorizontalDivider(thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Foreground Service Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.gateway_foreground_service), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.gateway_foreground_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = nodeForeground,
+                                onCheckedChange = { enabled ->
+                                    runtime.setForeground(enabled)
+                                    if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
+                                }
+                            )
+                        }
+
+                        // Chat Integration Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.gateway_use_node_chat), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.gateway_use_node_chat_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = useNodeChat,
+                                onCheckedChange = { useNodeChat = it }
+                            )
+                        }
+
+                        HorizontalDivider(thickness = 0.5.dp)
+
+                        // Canvas Debug Overlay Toggle
+                        val canvasDebugEnabled by runtime.canvasDebugStatusEnabled.collectAsState()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.canvas_debug_mode), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.canvas_debug_mode_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = canvasDebugEnabled,
+                                onCheckedChange = { runtime.setCanvasDebugStatusEnabled(it) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === LEGACY CONNECTION SECTION ===
+            CollapsibleSection(title = stringResource(R.string.settings_legacy_title), collapsible = true, initiallyExpanded = false) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f) // Dimmer
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.settings_legacy_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
                     // Webhook URL
                     OutlinedTextField(
                         value = webhookUrl,
@@ -314,7 +567,7 @@ fun SettingsScreen(
                                                                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                                                             }
                                                         } else {
-                                                            Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                            Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                         }
                                                         isFetchingAgents = false
                                                     }
@@ -369,7 +622,7 @@ fun SettingsScreen(
                                                         Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                                                     }
                                                 } else {
-                                                    Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                 }
                                                 isFetchingAgents = false
                                             }
@@ -438,7 +691,7 @@ fun SettingsScreen(
                                                         } catch (e: Exception) {
                                                             Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
                                                             // Show toast for this error specifically since it's part of the test
-                                                            Toast.makeText(context, "Connected, but failed to list agents: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            Toast.makeText(context, context.getString(R.string.agents_fetch_failed), Toast.LENGTH_LONG).show()
                                                         }
                                                     }
                                                 } catch (e: Exception) {
@@ -492,197 +745,8 @@ fun SettingsScreen(
                     }
                 }
             }
-            } // end CollapsibleSection for Connection
+            } // end CollapsibleSection for Legacy Connection
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // === DEVICE NODE SECTION ===
-            CollapsibleSection(
-                title = "Device Node",
-                subtitle = if (nodeConnected) nodeStatus.ifBlank { "Connected" } else "Disconnected",
-                initiallyExpanded = false
-            ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    StatusIndicator(
-                        state = if (nodeConnected) ConnectionState.Connected else ConnectionState.Disconnected,
-                        label = if (nodeConnected) "Connected" else "Offline"
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Keep node in foreground", style = MaterialTheme.typography.bodyLarge)
-                            Text("Enable persistent notification and runtime keepalive", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(
-                            checked = nodeForeground,
-                            onCheckedChange = { enabled ->
-                                runtime.setForeground(enabled)
-                                if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
-                            }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Use manual gateway", style = MaterialTheme.typography.bodyLarge)
-                            Text("Connect to a fixed host/port instead of discovery", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(
-                            checked = manualEnabledState,
-                            onCheckedChange = { runtime.setManualEnabled(it) }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = manualHostInput,
-                        onValueChange = { manualHostInput = it.trim() },
-                        label = { Text("Gateway Host") },
-                        placeholder = { Text("e.g. 192.168.1.100") },
-                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = manualEnabledState,
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    val portInt = manualPortInput.toIntOrNull()
-                    val isPortValid = portInt != null && portInt in 1..65535
-                    OutlinedTextField(
-                        value = manualPortInput,
-                        onValueChange = { manualPortInput = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Gateway Port") },
-                        placeholder = { Text("18789") },
-                        leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        enabled = manualEnabledState,
-                        isError = manualPortInput.isNotEmpty() && !isPortValid,
-                        supportingText = if (manualPortInput.isNotEmpty() && !isPortValid) {
-                            { Text("Port must be 1-65535") }
-                        } else null,
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = gatewayTokenInput,
-                        onValueChange = { gatewayTokenInput = it.trim() },
-                        label = { Text("Gateway Token (optional)") },
-                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = { showNodeToken = !showNodeToken }) {
-                                Icon(
-                                    if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = null
-                                )
-                            }
-                        },
-                        visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = manualEnabledState,
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Use TLS", style = MaterialTheme.typography.bodyLarge)
-                        Switch(
-                            checked = manualTlsState,
-                            onCheckedChange = { runtime.setManualTls(it) },
-                            enabled = manualEnabledState
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Use Node Chat backend", style = MaterialTheme.typography.bodyLarge)
-                            Text("Route chat via gateway chat.send and tool-calls", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(
-                            checked = useNodeChat,
-                            onCheckedChange = { useNodeChat = it }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            modifier = Modifier.weight(1f),
-                            enabled = manualEnabledState,
-                            onClick = {
-                                val port = manualPortInput.toIntOrNull()
-                                if (manualHostInput.isBlank() || port == null || port !in 1..65535) {
-                                    Toast.makeText(context, "Manual host/port is invalid", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    runtime.setManualHost(manualHostInput)
-                                    runtime.setManualPort(port)
-                                    runtime.setGatewayToken(gatewayTokenInput)
-                                    Toast.makeText(context, "Manual gateway settings applied", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        ) {
-                            Text("Apply")
-                        }
-
-                        Button(
-                            modifier = Modifier.weight(1f),
-                            enabled = manualEnabledState,
-                            onClick = {
-                                runtime.connectManual()
-                                if (nodeForeground) NodeForegroundService.start(context)
-                            }
-                        ) {
-                            Text("Connect")
-                        }
-
-                        OutlinedButton(
-                            modifier = Modifier.weight(1f),
-                            onClick = { runtime.disconnect() }
-                        ) {
-                            Text("Disconnect")
-                        }
-                    }
-                }
-            }
-            } // end CollapsibleSection for Device Node
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -964,6 +1028,7 @@ fun SettingsScreen(
             // === WAKE WORD SECTION ===
             CollapsibleSection(title = stringResource(R.string.wake_word)) {
 
+            // === Node / Gateway Wake Word ===
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -971,6 +1036,89 @@ fun SettingsScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.wake_word_node_title),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.wake_word_node_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // On/Off Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (voiceWakeMode == VoiceWakeMode.Off) stringResource(R.string.capability_off) else voiceWakeStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (voiceWakeMode == VoiceWakeMode.Off) Color.Gray else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Switch(
+                            checked = voiceWakeMode != VoiceWakeMode.Off,
+                            onCheckedChange = { on ->
+                                if (on) runtime.setVoiceWakeMode(VoiceWakeMode.Foreground)
+                                else runtime.setVoiceWakeMode(VoiceWakeMode.Off)
+                            }
+                        )
+                    }
+
+                    // Foreground / Always selector (visible when enabled)
+                    if (voiceWakeMode != VoiceWakeMode.Off) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Foreground Only
+                            FilterChip(
+                                selected = voiceWakeMode == VoiceWakeMode.Foreground,
+                                onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Foreground) },
+                                label = { Text(stringResource(R.string.wake_word_node_foreground), fontSize = 12.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            // Always
+                            FilterChip(
+                                selected = voiceWakeMode == VoiceWakeMode.Always,
+                                onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Always) },
+                                label = { Text(stringResource(R.string.wake_word_node_always), fontSize = 12.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Text(
+                            text = if (voiceWakeMode == VoiceWakeMode.Always)
+                                stringResource(R.string.wake_word_node_always_desc)
+                            else
+                                stringResource(R.string.wake_word_node_foreground_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // === Classic Wake Word (Voice Overlay / Vosk) ===
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.wake_word_classic_title),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     ExposedDropdownMenuBox(
                         expanded = showWakeWordMenu,
                         onExpandedChange = { showWakeWordMenu = it }
@@ -1037,6 +1185,42 @@ fun SettingsScreen(
                         }
                         Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
                     }
+
+                    // Wake Word Sync from Server (only when connected)
+                    if (nodeConnected) {
+                        HorizontalDivider(thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
+                        var syncInProgress by remember { mutableStateOf(false) }
+                        var syncMessage by remember { mutableStateOf<String?>(null) }
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                syncInProgress = true
+                                scope.launch {
+                                    try {
+                                        runtime.refreshWakeWordsFromGateway()
+                                        syncMessage = context.getString(R.string.wake_word_sync_success)
+                                    } catch (e: Exception) {
+                                        syncMessage = context.getString(R.string.wake_word_sync_failed)
+                                    } finally {
+                                        syncInProgress = false
+                                    }
+                                }
+                            },
+                            enabled = !syncInProgress
+                        ) {
+                            Icon(Icons.Default.CloudDownload, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.wake_word_sync_from_server))
+                        }
+                        if (syncMessage != null) {
+                            Text(
+                                text = syncMessage!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1081,6 +1265,20 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.report_issue))
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val versionName = remember {
+                        runCatching {
+                            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                        }.getOrNull() ?: ""
+                    }
+                    Text(
+                        text = stringResource(R.string.app_version, versionName),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             }
 
