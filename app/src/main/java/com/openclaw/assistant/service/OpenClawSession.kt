@@ -43,6 +43,8 @@ import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.TTSManager
 import com.openclaw.assistant.speech.SpeechResult
 import com.openclaw.assistant.speech.TTSUtils
+import com.openclaw.assistant.gateway.GatewayClient
+import com.openclaw.assistant.ui.chat.CanvasUiState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -83,6 +85,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     private var partialText = mutableStateOf("")
     private var errorMessage = mutableStateOf<String?>(null)
     private var audioLevel = mutableStateOf(0f) // Audio level for visualization
+    private var canvasState = mutableStateOf(CanvasUiState())
 
     override fun onCreate() {
         Log.e(TAG, "Session onCreate start")
@@ -150,9 +153,13 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
                     partialText = partialText.value,
                     errorMessage = errorMessage.value,
                     audioLevel = audioLevel.value,
+                    canvasState = canvasState.value,
                     onClose = { finish() },
                     onRetry = { startListening() },
-                    onInterrupt = { interruptAndListen() }
+                    onInterrupt = { interruptAndListen() },
+                    onSnapshotCaptured = { id, b64 -> onSnapshotCaptured(id, b64) },
+                    onEvalCompleted = { onEvalCompleted() },
+                    onA2uiProcessed = { onA2uiProcessed() }
                 )
             }
         }
@@ -162,10 +169,9 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
 
-        // Recreate scope if it was cancelled by a previous onHide()
-        if (!scope.isActive) {
-            scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-        }
+        // Reset scope to prevent duplicate collectors if onShow is called multiple times
+        scope.cancel()
+        scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
         // Ensure any existing SpeechRecognizerManager is cleaned up before creating a new one
         if (this::speechManager.isInitialized) {
@@ -217,6 +223,41 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
         // Start speech recognition
         startListening()
+
+        // Observe gateway events
+        val gatewayClient = GatewayClient.getInstance()
+        scope.launch {
+            gatewayClient.agentEvents.collect { event ->
+                if (event.stream == "tool" && event.data?.phase == "start") {
+                    handleToolCall(event)
+                }
+            }
+        }
+
+        scope.launch {
+            gatewayClient.streamingText.collect { text ->
+                if (currentState.value == AssistantState.THINKING || currentState.value == AssistantState.SPEAKING) {
+                    displayText.value = text ?: ""
+                }
+            }
+        }
+
+        scope.launch {
+            gatewayClient.chatEvents.collect { event ->
+                if (event.state == "final" || event.state == "error" || event.state == "aborted") {
+                    if (event.state == "final" && currentState.value == AssistantState.THINKING) {
+                        val fullText = gatewayClient.streamingText.value ?: ""
+                        if (fullText.isNotEmpty()) {
+                            handleResponseReceived(fullText)
+                        }
+                    } else if (event.state == "error") {
+                        stopThinkingSound()
+                        currentState.value = AssistantState.ERROR
+                        errorMessage.value = event.errorMessage ?: "Unknown error"
+                    }
+                }
+            }
+        }
     }
     
     override fun onHide() {
@@ -399,7 +440,30 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
                 chatRepository.addMessage(sessionId, message, isUser = true)
             }
 
-            sendViaHttp(message)
+            val gatewayClient = GatewayClient.getInstance()
+            if (gatewayClient.isConnected()) {
+                sendViaWebSocket(message)
+            } else {
+                sendViaHttp(message)
+            }
+        }
+    }
+
+    private suspend fun sendViaWebSocket(message: String) {
+        try {
+            val gatewayClient = GatewayClient.getInstance()
+            val runId = gatewayClient.sendChat(settings.sessionId, message)
+            if (runId == null) {
+                stopThinkingSound()
+                currentState.value = AssistantState.ERROR
+                errorMessage.value = "Failed to start chat run"
+            }
+            // Response handled via chatEvents collector in onShow
+        } catch (e: Exception) {
+            Log.e(TAG, "WS Chat error", e)
+            stopThinkingSound()
+            currentState.value = AssistantState.ERROR
+            errorMessage.value = e.message
         }
     }
 
@@ -503,6 +567,112 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
 
 
+    private fun handleToolCall(event: com.openclaw.assistant.gateway.AgentEventPayload) {
+        val data = event.data ?: return
+        val name = data.name ?: return
+        val toolCallId = data.toolCallId ?: return
+        val args = data.arguments ?: ""
+
+        if (name.startsWith("canvas.")) {
+            handleCanvasTool(name, toolCallId, args)
+        } else {
+             scope.launch {
+                try {
+                    GatewayClient.getInstance().sendToolResult(settings.sessionId, toolCallId, "{}")
+                } catch (e: Exception) {}
+            }
+        }
+    }
+
+    private fun handleCanvasTool(name: String, toolCallId: String, args: String) {
+        val sessionId = settings.sessionId
+        val gatewayClient = GatewayClient.getInstance()
+
+        val canvas = canvasState.value
+        var nextCanvas = canvas.copy(isVisible = true)
+
+        try {
+            val argObj = try {
+                com.google.gson.JsonParser.parseString(args).asJsonObject
+            } catch (e: Exception) {
+                com.google.gson.JsonObject()
+            }
+
+            when (name) {
+                "canvas.navigate" -> {
+                    var url = argObj.get("url")?.asString ?: ""
+                    if (url.isEmpty()) {
+                        val baseUrl = settings.getBaseUrl()
+                        url = if (baseUrl.endsWith("/")) "${baseUrl}canvas" else "${baseUrl}/canvas"
+                    }
+                    nextCanvas = nextCanvas.copy(url = url, lastNavigationTime = System.currentTimeMillis())
+                    scope.launch {
+                        try {
+                            gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                        } catch (e: Exception) {}
+                    }
+                }
+                "canvas.eval" -> {
+                    val code = argObj.get("code")?.asString ?: ""
+                    nextCanvas = nextCanvas.copy(pendingEval = code)
+                    scope.launch {
+                        try {
+                            gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                        } catch (e: Exception) {}
+                    }
+                }
+                "canvas.snapshot" -> {
+                    nextCanvas = nextCanvas.copy(pendingSnapshotId = toolCallId)
+                }
+                "canvas.a2ui.push" -> {
+                    val data = argObj.get("data")?.toString() ?: argObj.toString()
+                    nextCanvas = nextCanvas.copy(pendingA2uiPush = data)
+                    scope.launch {
+                        try {
+                            gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                        } catch (e: Exception) {}
+                    }
+                }
+                "canvas.a2ui.reset" -> {
+                    nextCanvas = nextCanvas.copy(pendingA2uiReset = true)
+                    scope.launch {
+                        try {
+                            gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            scope.launch {
+                try {
+                    gatewayClient.sendToolResult(sessionId, toolCallId, "{\"error\":\"${e.message}\"}")
+                } catch (e2: Exception) {}
+            }
+        }
+
+        canvasState.value = nextCanvas
+    }
+
+    private fun onSnapshotCaptured(toolCallId: String, base64: String) {
+        scope.launch {
+            try {
+                GatewayClient.getInstance().sendToolResult(settings.sessionId, toolCallId, "{\"image\":\"$base64\"}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send snapshot result", e)
+            } finally {
+                canvasState.value = canvasState.value.copy(pendingSnapshotId = null)
+            }
+        }
+    }
+
+    private fun onEvalCompleted() {
+        canvasState.value = canvasState.value.copy(pendingEval = null)
+    }
+
+    private fun onA2uiProcessed() {
+        canvasState.value = canvasState.value.copy(pendingA2uiPush = null, pendingA2uiReset = false)
+    }
+
     private fun abandonAudioFocus() {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -538,9 +708,13 @@ fun AssistantUI(
     partialText: String,
     errorMessage: String?,
     audioLevel: Float,
+    canvasState: CanvasUiState = CanvasUiState(),
     onClose: () -> Unit,
     onRetry: () -> Unit,
-    onInterrupt: () -> Unit = {}
+    onInterrupt: () -> Unit = {},
+    onSnapshotCaptured: (String, String) -> Unit = { _, _ -> },
+    onEvalCompleted: () -> Unit = {},
+    onA2uiProcessed: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -703,6 +877,19 @@ fun AssistantUI(
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(onClick = onRetry) {
                     Text(stringResource(R.string.action_try_again))
+                }
+            }
+
+            if (canvasState.isVisible) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(12.dp)).background(Color.LightGray)) {
+                    com.openclaw.assistant.ui.components.CanvasWebView(
+                        state = canvasState,
+                        onSnapshotCaptured = onSnapshotCaptured,
+                        onEvalCompleted = onEvalCompleted,
+                        onA2uiProcessed = onA2uiProcessed,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
 

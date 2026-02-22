@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
@@ -132,7 +133,11 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onSelectSession = { viewModel.selectSession(it) },
                     onCreateSession = { viewModel.createNewSession() },
                     onDeleteSession = { viewModel.deleteSession(it) },
-                    onAgentSelected = { viewModel.setAgent(it) }
+                    onAgentSelected = { viewModel.setAgent(it) },
+                    onToggleCanvas = { viewModel.toggleCanvas() },
+                    onCanvasSnapshot = { id, b64 -> viewModel.onSnapshotCaptured(id, b64) },
+                    onCanvasEvalCompleted = { viewModel.onEvalCompleted() },
+                    onCanvasA2uiProcessed = { viewModel.onA2uiProcessed() }
                 )
             }
         }
@@ -227,7 +232,11 @@ fun ChatScreen(
     onSelectSession: (String) -> Unit,
     onCreateSession: () -> Unit,
     onDeleteSession: (String) -> Unit,
-    onAgentSelected: (String?) -> Unit = {}
+    onAgentSelected: (String?) -> Unit = {},
+    onToggleCanvas: () -> Unit = {},
+    onCanvasSnapshot: (String, String) -> Unit = { _, _ -> },
+    onCanvasEvalCompleted: () -> Unit = {},
+    onCanvasA2uiProcessed: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
@@ -358,6 +367,13 @@ fun ChatScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onToggleCanvas) {
+                            Icon(
+                                imageVector = if (uiState.canvasState.isVisible) Icons.Default.SmartToy else Icons.Default.SmartToy, // TODO: Use better icon
+                                contentDescription = "Canvas",
+                                tint = if (uiState.canvasState.isVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu))
                         }
@@ -372,6 +388,29 @@ fun ChatScreen(
             },
             bottomBar = {
                 Column {
+                    if (uiState.canvasState.isVisible) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(300.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            com.openclaw.assistant.ui.components.CanvasWebView(
+                                state = uiState.canvasState,
+                                onSnapshotCaptured = onCanvasSnapshot,
+                                onEvalCompleted = onCanvasEvalCompleted,
+                                onA2uiProcessed = onCanvasA2uiProcessed,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            IconButton(
+                                onClick = onToggleCanvas,
+                                modifier = Modifier.align(Alignment.TopEnd)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Close Canvas")
+                            }
+                        }
+                    }
+
                      if (uiState.partialText.isNotBlank()) {
                          Text(
                              text = uiState.partialText,

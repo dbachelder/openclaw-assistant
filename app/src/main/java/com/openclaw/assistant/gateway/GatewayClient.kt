@@ -201,6 +201,21 @@ class GatewayClient(context: android.content.Context) {
     }
 
     /**
+     * Send tool call result via WebSocket RPC.
+     */
+    suspend fun sendToolResult(sessionKey: String, toolCallId: String, result: String) {
+        val params = JsonObject().apply {
+            addProperty("sessionKey", sessionKey)
+            addProperty("toolCallId", toolCallId)
+            addProperty("result", result)
+        }
+        val res = request("chat.tool_result", params)
+        if (!res.ok) {
+            throw IllegalStateException("chat.tool_result failed: ${res.errorMessage ?: res.errorCode}")
+        }
+    }
+
+    /**
      * Get chat history for a session.
      */
     suspend fun getChatHistory(sessionKey: String): ChatHistoryResult? {
@@ -529,6 +544,9 @@ class GatewayClient(context: android.content.Context) {
             )
             Log.d(TAG, "Chat event: state=${event.state}, runId=${event.runId}")
             _chatEvents.tryEmit(event)
+
+            // NOTE: _streamingText is NOT cleared here because collectors need it in "final" state.
+            // It is cleared/initialized in handleAgentEvent when a new run starts.
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse chat event: ${e.message}, json=${payloadJson.take(200)}")
         }
@@ -541,6 +559,7 @@ class GatewayClient(context: android.content.Context) {
             val streamData = if (data != null) {
                 AgentStreamData(
                     text = data.get("text")?.asString,
+                    arguments = data.get("arguments")?.asString ?: data.get("text")?.asString,
                     phase = data.get("phase")?.asString,
                     name = data.get("name")?.asString,
                     toolCallId = data.get("toolCallId")?.asString
@@ -556,8 +575,12 @@ class GatewayClient(context: android.content.Context) {
             _agentEvents.tryEmit(event)
 
             // Update streaming text for "assistant" stream
-            if (event.stream == "assistant" && !streamData?.text.isNullOrEmpty()) {
-                _streamingText.value = streamData?.text
+            if (event.stream == "assistant") {
+                if (streamData?.phase == "start") {
+                    _streamingText.value = ""
+                } else if (!streamData?.text.isNullOrEmpty()) {
+                    _streamingText.value = (_streamingText.value ?: "") + (streamData?.text ?: "")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse agent event: ${e.message}")

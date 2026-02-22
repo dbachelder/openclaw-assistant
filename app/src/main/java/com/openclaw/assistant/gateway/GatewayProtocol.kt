@@ -27,6 +27,7 @@ data class AgentEventPayload(
 
 data class AgentStreamData(
     val text: String?,
+    val arguments: String?,   // Usually the same as text when phase=start for tools
     val phase: String?,       // "start", "result"
     val name: String?,
     val toolCallId: String?

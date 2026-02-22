@@ -33,6 +33,16 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+data class CanvasUiState(
+    val url: String = "",
+    val isVisible: Boolean = false,
+    val lastNavigationTime: Long = 0,
+    val pendingEval: String? = null,
+    val pendingA2uiPush: String? = null,
+    val pendingA2uiReset: Boolean = false,
+    val pendingSnapshotId: String? = null
+)
+
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isListening: Boolean = false,
@@ -44,7 +54,8 @@ data class ChatUiState(
     val selectedAgentId: String? = null, // null = use default from settings
     val defaultAgentId: String = "main", // From settings, for display when agent list unavailable
     val isPairingRequired: Boolean = false,
-    val deviceId: String? = null
+    val deviceId: String? = null,
+    val canvasState: CanvasUiState = CanvasUiState()
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -90,6 +101,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Messages Flow - mapped from current Session ID
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val _messagesFlow = _currentSessionId.flatMapLatest { sessionId ->
          if (sessionId != null) {
              chatRepository.getMessages(sessionId).map { entities ->
@@ -151,6 +163,193 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         // Auto-connect to WebSocket if configured
         connectGatewayIfNeeded()
+
+        // Observe streaming text from gateway for real-time AI response
+        viewModelScope.launch {
+            gatewayClient.streamingText.collect { text ->
+                // Only show streaming text if we are not currently listening to user
+                if (!_uiState.value.isListening) {
+                    _uiState.update { it.copy(
+                        partialText = text ?: ""
+                    )}
+                }
+            }
+        }
+
+        // Observe chat events for run completion
+        viewModelScope.launch {
+            gatewayClient.chatEvents.collect { event ->
+                val state = event.state
+                if (state == "final" || state == "error" || state == "aborted") {
+                    val wasThinking = _uiState.value.isThinking
+                    _uiState.update { it.copy(isThinking = false) }
+                    stopThinkingSound()
+
+                    if (state == "final" && wasThinking) {
+                        // Capture the final text from streaming before it gets cleared
+                        val fullText = gatewayClient.streamingText.value ?: ""
+                        _uiState.update { it.copy(partialText = "") }
+
+                        if (fullText.isNotEmpty()) {
+                            _currentSessionId.value?.let { sessionId ->
+                                chatRepository.addMessage(sessionId, fullText, isUser = false)
+                                afterResponseReceived(fullText)
+                            }
+                        }
+                    } else if (state == "error") {
+                        _uiState.update { it.copy(error = event.errorMessage ?: "Unknown error", partialText = "") }
+                    } else if (state == "aborted") {
+                        _uiState.update { it.copy(partialText = "") }
+                    }
+                }
+            }
+        }
+
+        // Observe agent events for tools
+        viewModelScope.launch {
+            gatewayClient.agentEvents.collect { event ->
+                if (event.stream == "tool" && event.data?.phase == "start") {
+                    handleToolCall(event)
+                }
+            }
+        }
+    }
+
+    private fun handleToolCall(event: com.openclaw.assistant.gateway.AgentEventPayload) {
+        val data = event.data ?: return
+        val name = data.name ?: return
+        val toolCallId = data.toolCallId ?: return
+        val args = data.arguments ?: ""
+
+        Log.d(TAG, "Handling tool call: $name, args=$args")
+
+        if (name.startsWith("canvas.")) {
+            handleCanvasTool(name, toolCallId, args)
+        } else {
+            // Unhandled tool, just send empty result to not hang the agent
+             viewModelScope.launch {
+                try {
+                    gatewayClient.sendToolResult(_currentSessionId.value ?: "", toolCallId, "{}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send default tool result for $name")
+                }
+            }
+        }
+    }
+
+    private fun handleCanvasTool(name: String, toolCallId: String, args: String) {
+        val sessionId = _currentSessionId.value ?: return
+
+        _uiState.update { state ->
+            val canvas = state.canvasState
+            var nextCanvas = canvas.copy(isVisible = true)
+
+            try {
+                val argObj = try {
+                    com.google.gson.JsonParser.parseString(args).asJsonObject
+                } catch (e: Exception) {
+                    com.google.gson.JsonObject()
+                }
+
+                when (name) {
+                    "canvas.navigate" -> {
+                        var url = argObj.get("url")?.asString ?: ""
+                        if (url.isEmpty()) {
+                            // Default to Gateway canvas host
+                            val baseUrl = settings.getBaseUrl()
+                            url = if (baseUrl.endsWith("/")) "${baseUrl}canvas" else "${baseUrl}/canvas"
+                        }
+                        nextCanvas = nextCanvas.copy(url = url, lastNavigationTime = System.currentTimeMillis())
+                        viewModelScope.launch {
+                            try {
+                                gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to send canvas.navigate result", e)
+                            }
+                        }
+                    }
+                    "canvas.eval" -> {
+                        val code = argObj.get("code")?.asString ?: ""
+                        nextCanvas = nextCanvas.copy(pendingEval = code)
+                        // Result sent in onEvalCompleted? No, usually eval confirmation is immediate
+                        viewModelScope.launch {
+                            try {
+                                gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to send canvas.eval result", e)
+                            }
+                        }
+                    }
+                    "canvas.snapshot" -> {
+                        nextCanvas = nextCanvas.copy(pendingSnapshotId = toolCallId)
+                        // Result will be sent from onSnapshotCaptured callback
+                    }
+                    "canvas.a2ui.push" -> {
+                        val data = argObj.get("data")?.toString() ?: argObj.toString()
+                        nextCanvas = nextCanvas.copy(pendingA2uiPush = data)
+                        viewModelScope.launch {
+                            try {
+                                gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to send canvas.a2ui.push result", e)
+                            }
+                        }
+                    }
+                    "canvas.a2ui.reset" -> {
+                        nextCanvas = nextCanvas.copy(pendingA2uiReset = true)
+                        viewModelScope.launch {
+                            try {
+                                gatewayClient.sendToolResult(sessionId, toolCallId, "{\"success\":true}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to send canvas.a2ui.reset result", e)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Canvas tool error: $name", e)
+                viewModelScope.launch {
+                    try {
+                        gatewayClient.sendToolResult(sessionId, toolCallId, "{\"error\":\"${e.message}\"}")
+                    } catch (e2: Exception) {}
+                }
+            }
+
+            state.copy(canvasState = nextCanvas)
+        }
+    }
+
+    fun onSnapshotCaptured(toolCallId: String, base64: String) {
+        val sessionId = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            try {
+                gatewayClient.sendToolResult(sessionId, toolCallId, "{\"image\":\"$base64\"}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send snapshot result", e)
+            } finally {
+                _uiState.update { it.copy(
+                    canvasState = it.canvasState.copy(pendingSnapshotId = null)
+                )}
+            }
+        }
+    }
+
+    fun onEvalCompleted() {
+        _uiState.update { it.copy(
+            canvasState = it.canvasState.copy(pendingEval = null)
+        )}
+    }
+
+    fun onA2uiProcessed() {
+        _uiState.update { it.copy(
+            canvasState = it.canvasState.copy(pendingA2uiPush = null, pendingA2uiReset = false)
+        )}
+    }
+
+    fun toggleCanvas() {
+        _uiState.update { it.copy(
+            canvasState = it.canvasState.copy(isVisible = !it.canvasState.isVisible)
+        )}
     }
 
     fun connectGatewayIfNeeded() {
@@ -246,7 +445,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Ensure we have a session
         val sessionId = _currentSessionId.value ?: return
 
-        _uiState.update { it.copy(isThinking = true) }
+        _uiState.update { it.copy(isThinking = true, error = null) }
         if (lastInputWasVoice) {
             toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
         }
@@ -256,11 +455,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // Save User Message
                 chatRepository.addMessage(sessionId, text, isUser = true)
-                sendViaHttp(sessionId, text)
+
+                if (gatewayClient.isConnected()) {
+                    sendViaWebSocket(sessionId, text)
+                } else {
+                    sendViaHttp(sessionId, text)
+                }
             } catch (e: Exception) {
                 stopThinkingSound()
                 _uiState.update { it.copy(isThinking = false, error = e.message) }
             }
+        }
+    }
+
+    private suspend fun sendViaWebSocket(sessionId: String, text: String) {
+        try {
+            val runId = gatewayClient.sendChat(sessionId, text)
+            if (runId == null) {
+                _uiState.update { it.copy(isThinking = false, error = "Failed to start chat run") }
+                stopThinkingSound()
+            }
+            // Run progress is handled by gateway events collected in init
+        } catch (e: Exception) {
+            _uiState.update { it.copy(isThinking = false, error = e.message) }
+            stopThinkingSound()
         }
     }
 
