@@ -35,9 +35,9 @@ fun PairingRequiredCard(deviceId: String, displayName: String = "") {
     // This avoids depending on specific field names that may change across openclaw versions.
     val safeName = displayName.replace("\\", "\\\\").replace("'", "\\'")
     val safeId = deviceId.replace("\\", "\\\\").replace("'", "\\'")
-    val pythonScript = "import sys,json;d=json.load(sys.stdin);ids={'$safeName','$safeId'};r=next((x for x in d.get('pending',[]) if any(str(v) in ids for v in x.values())),None);print(next((str(v) for k,v in (r or {}).items() if k.lower()=='request'),'NOT_FOUND'))"
-    val approveCommand = "openclaw devices approve \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
-    val rejectCommand = "openclaw devices reject \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
+    val pythonScript = "import sys,json;d=json.load(sys.stdin);ids={'$safeName','$safeId'};[print(v) for x in d.get('pending',[]) if any(str(v) in ids for v in x.values()) for k,v in x.items() if k.lower() in ('request','requestid')]"
+    val approveCommand = "openclaw devices list --json | python3 -c \"$pythonScript\" | while read id; do openclaw devices approve \"\$id\"; done"
+    val rejectCommand = "openclaw devices list --json | python3 -c \"$pythonScript\" | while read id; do openclaw devices reject \"\$id\"; done"
 
     var expanded by remember { mutableStateOf(false) }
 

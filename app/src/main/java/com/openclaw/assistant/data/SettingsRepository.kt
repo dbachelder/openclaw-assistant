@@ -63,11 +63,6 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_CUSTOM_WAKE_WORD, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CUSTOM_WAKE_WORD, value).apply()
 
-    // Wake word engine selection (classic or gateway)
-    var wakeWordEngine: String
-        get() = prefs.getString(KEY_WAKE_WORD_ENGINE, WAKE_WORD_ENGINE_GATEWAY) ?: WAKE_WORD_ENGINE_GATEWAY
-        set(value) = prefs.edit().putString(KEY_WAKE_WORD_ENGINE, value).apply()
-
     // Get the actual wake words list for Vosk
     fun getWakeWords(): List<String> {
         return when (wakeWordPreset) {
@@ -225,10 +220,6 @@ class SettingsRepository(context: Context) {
         const val WAKE_WORD_JARVIS = "jarvis"
         const val WAKE_WORD_COMPUTER = "computer"
         const val WAKE_WORD_CUSTOM = "custom"
-        
-        private const val KEY_WAKE_WORD_ENGINE = "wake_word_engine"
-        const val WAKE_WORD_ENGINE_CLASSIC = "classic"
-        const val WAKE_WORD_ENGINE_GATEWAY = "gateway"
         
         const val CONNECTION_TYPE_GATEWAY = "gateway"
         const val CONNECTION_TYPE_HTTP = "http"

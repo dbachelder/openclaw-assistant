@@ -167,6 +167,9 @@ class NodeRuntime(context: Context) {
   private val _mainSessionKey = MutableStateFlow("main")
   val mainSessionKey: StateFlow<String> = _mainSessionKey.asStateFlow()
 
+  private val _serverVersion = MutableStateFlow<String?>(null)
+  val serverVersion: StateFlow<String?> = _serverVersion.asStateFlow()
+
   private val cameraHudSeq = AtomicLong(0)
   private val _cameraHud = MutableStateFlow<CameraHudState?>(null)
   val cameraHud: StateFlow<CameraHudState?> = _cameraHud.asStateFlow()
@@ -205,11 +208,12 @@ class NodeRuntime(context: Context) {
       scope = scope,
       identityStore = identityStore,
       deviceAuthStore = deviceAuthStore,
-      onConnected = { name, remote, mainSessionKey ->
+      onConnected = { name, remote, version, mainSessionKey ->
         operatorConnected = true
         operatorStatusText = "Connected"
         _serverName.value = name
         _remoteAddress.value = remote
+        _serverVersion.value = version
         _isPairingRequired.value = false
         applyMainSessionKey(mainSessionKey)
         updateStatus()
@@ -221,6 +225,7 @@ class NodeRuntime(context: Context) {
         operatorStatusText = message
         _serverName.value = null
         _remoteAddress.value = null
+        _serverVersion.value = null
         if (!isCanonicalMainSessionKey(_mainSessionKey.value)) {
           _mainSessionKey.value = "main"
         }
@@ -239,9 +244,10 @@ class NodeRuntime(context: Context) {
       scope = scope,
       identityStore = identityStore,
       deviceAuthStore = deviceAuthStore,
-      onConnected = { _, _, _ ->
+      onConnected = { _, _, version, _ ->
         nodeConnected = true
         nodeStatusText = "Connected"
+        _serverVersion.value = version
         _isPairingRequired.value = false
         updateStatus()
         maybeNavigateToA2uiOnConnect()
@@ -249,6 +255,7 @@ class NodeRuntime(context: Context) {
       onDisconnected = { message ->
         nodeConnected = false
         nodeStatusText = message
+        _serverVersion.value = null
         updateStatus()
         showLocalCanvasOnDisconnect()
       },
@@ -285,25 +292,31 @@ class NodeRuntime(context: Context) {
   private fun updateStatus() {
     _isConnected.value = operatorConnected
     _isOperatorOffline.value = !operatorConnected && nodeConnected
-    
+
     val pairingKeyword = "pairing required"
     val paringKeyword = "paring required" // Handle common typo in gateway or its libraries
-    val isErrorPairing = operatorStatusText.contains(pairingKeyword, ignoreCase = true) || 
-                         operatorStatusText.contains(paringKeyword, ignoreCase = true) ||
-                         nodeStatusText.contains(pairingKeyword, ignoreCase = true) ||
-                         nodeStatusText.contains(paringKeyword, ignoreCase = true)
-    
-    if (isErrorPairing) {
-        _isPairingRequired.value = true
-    } else if (operatorConnected || nodeConnected) {
-        _isPairingRequired.value = false
+    val operatorNeedsPairing = !operatorConnected && (
+      operatorStatusText.contains(pairingKeyword, ignoreCase = true) ||
+      operatorStatusText.contains(paringKeyword, ignoreCase = true)
+    )
+    val nodeNeedsPairing = !nodeConnected && (
+      nodeStatusText.contains(pairingKeyword, ignoreCase = true) ||
+      nodeStatusText.contains(paringKeyword, ignoreCase = true)
+    )
+
+    if (operatorNeedsPairing || nodeNeedsPairing) {
+      // Show pairing card as long as either session still needs approval,
+      // even if the other session has already connected.
+      _isPairingRequired.value = true
+    } else if (!operatorNeedsPairing && !nodeNeedsPairing) {
+      _isPairingRequired.value = false
     }
 
     _statusText.value =
       when {
         operatorConnected && nodeConnected -> "Connected"
-        operatorConnected && !nodeConnected -> "Connected (node offline)"
-        !operatorConnected && nodeConnected -> "Connected (operator offline)"
+        operatorConnected && !nodeConnected -> "Operator Online (Node Offline)"
+        !operatorConnected && nodeConnected -> "Node Online (Operator Offline)"
         operatorStatusText.isNotBlank() && operatorStatusText != "Offline" -> operatorStatusText
         else -> nodeStatusText
       }
@@ -604,6 +617,9 @@ class NodeRuntime(context: Context) {
 
   fun connectManual() {
     _isPairingRequired.value = false
+    operatorStatusText = ""
+    nodeStatusText = ""
+    _isPairingRequired.value = false
     val host = manualHost.value.trim()
       .removePrefix("http://")
       .removePrefix("https://")
@@ -707,6 +723,27 @@ class NodeRuntime(context: Context) {
 
   fun refreshChatSessions(limit: Int? = null) {
     chat.refreshSessions(limit = limit)
+  }
+
+  /** Create or rename a session on the gateway via sessions.patch. */
+  suspend fun patchChatSession(key: String, label: String): Boolean {
+    return try {
+      val params = buildJsonObject {
+        put("key", JsonPrimitive(key))
+        put("label", JsonPrimitive(label))
+      }
+      operatorSession.request("sessions.patch", params.toString())
+      true
+    } catch (_: Throwable) { false }
+  }
+
+  /** Delete a session on the gateway via sessions.delete. */
+  suspend fun deleteChatSession(key: String): Boolean {
+    return try {
+      val params = buildJsonObject { put("key", JsonPrimitive(key)) }
+      operatorSession.request("sessions.delete", params.toString())
+      true
+    } catch (_: Throwable) { false }
   }
 
   fun setChatThinkingLevel(level: String) {

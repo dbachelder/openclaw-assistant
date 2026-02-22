@@ -75,7 +75,7 @@
     <string name="debug_force_start">デバッグ: 強制セッション開始</string>
     
     <!-- Settings Screen -->
-    <string name="connection">接続</string>
+    <string name="connection">Connection</string>
     <string name="voice">音声</string>
     <string name="wake_word">ウェイクワード</string>
     <string name="voice_output">音声出力</string>
@@ -212,6 +212,7 @@
     <string name="gateway_port_error">無効なポート番号</string>
     <string name="gateway_token">トークン</string>
     <string name="gateway_use_tls">TLSを使用</string>
+    <string name="gateway_use_tls_desc">暗号化された安全な接続を使用します</string>
     <string name="gateway_invalid_params">ホストまたはポートが無効です</string>
     <string name="gateway_settings_applied">設定を適用しました</string>
     <string name="apply">適用</string>
@@ -303,6 +304,8 @@
     <!-- Status Indicators -->
     <string name="status_online">オンライン</string>
     <string name="status_offline">オフライン</string>
+    <string name="status_operator_online_node_offline">オペレーター接続中（ノードオフライン）</string>
+    <string name="status_node_online_operator_offline">オペレーター接続中（ノード未認証）</string>
 
     <!-- Gateway Trust Dialog -->
     <string name="gateway_trust_title">このゲートウェイを信頼しますか？</string>
@@ -321,7 +324,7 @@
     <string name="wake_word_node_foreground_desc">OpenClawが開いている間のみ検出します。</string>
     <string name="wake_word_node_always">常時</string>
     <string name="wake_word_node_always_desc">バックグラウンドでも検出します（常駐通知を使用）。</string>
-    <string name="wake_word_classic_title">クラシックモード（音声オーバーレイ）</string>
+    <string name="wake_word_classic_title">Vosk</string>
     <string name="state_verify_fingerprint">ゲートウェイ証明書を確認中…</string>
     <string name="state_failed_fingerprint">失敗: 証明書を読み込めませんでした</string>
 </resources>

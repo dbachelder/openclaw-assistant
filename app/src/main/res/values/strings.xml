@@ -258,6 +258,7 @@
     <string name="gateway_port_error">Invalid port</string>
     <string name="gateway_token">Token</string>
     <string name="gateway_use_tls">Use TLS</string>
+    <string name="gateway_use_tls_desc">Use encrypted and secure connection</string>
     <string name="gateway_invalid_params">Invalid host or port</string>
     <string name="gateway_settings_applied">Settings applied</string>
     <string name="apply">Apply</string>
@@ -316,6 +317,8 @@
     <!-- Status Indicators -->
     <string name="status_online">ONLINE</string>
     <string name="status_offline">OFFLINE</string>
+    <string name="status_operator_online_node_offline">Operator Online (Node Offline)</string>
+    <string name="status_node_online_operator_offline">Node Online (Operator Offline)</string>
 
     <!-- Gateway Trust Dialog -->
     <string name="gateway_trust_title">Trust this Gateway?</string>
@@ -335,7 +338,7 @@
     <string name="wake_word_node_foreground_desc">Listens only while OpenClaw is open.</string>
     <string name="wake_word_node_always">Always</string>
     <string name="wake_word_node_always_desc">Continues listening in the background (uses a persistent notification).</string>
-    <string name="wake_word_classic_title">Vosk Mode (Voice Overlay)</string>
+    <string name="wake_word_classic_title">Vosk</string>
     <string name="wake_word_engine_vosk">Vosk (Local)</string>
     <string name="wake_words_label">Wake Words</string>
     <string name="wake_words_placeholder">openclaw, claude</string>

@@ -115,16 +115,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         if (pendingHotwordStart) {
             pendingHotwordStart = false
             if (recordAudioGranted) {
-                if (settings.wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
-                    val runtime = (applicationContext as OpenClawApplication).nodeRuntime
-                    runtime.setVoiceWakeMode(VoiceWakeMode.Always)
-                    NodeForegroundService.start(this)
-                    Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
-                } else {
-                    settings.hotwordEnabled = true
-                    HotwordService.start(this)
-                    Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
-                }
+                settings.hotwordEnabled = true
+                HotwordService.start(this)
+                Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
             } else {
                 if (!ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
                     showPermissionSettingsDialog()
@@ -256,19 +249,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     fun toggleHotwordService(enabled: Boolean) {
-        val engine = settings.wakeWordEngine
-        val runtime = (applicationContext as OpenClawApplication).nodeRuntime
-
         if (enabled) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
-                if (engine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
-                    runtime.setVoiceWakeMode(VoiceWakeMode.Always)
-                    NodeForegroundService.start(this)
-                } else {
-                    settings.hotwordEnabled = true
-                    HotwordService.start(this)
-                }
+                settings.hotwordEnabled = true
+                HotwordService.start(this)
                 Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
             } else if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
                 // Show rationale dialog before requesting permission
@@ -279,15 +264,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
             }
         } else {
-            if (engine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
-                runtime.setVoiceWakeMode(VoiceWakeMode.Off)
-                if (!runtime.isForeground.value) {
-                    NodeForegroundService.stop(this)
-                }
-            } else {
-                settings.hotwordEnabled = false
-                HotwordService.stop(this)
-            }
+            settings.hotwordEnabled = false
+            HotwordService.stop(this)
             Toast.makeText(this, getString(R.string.hotword_stopped), Toast.LENGTH_SHORT).show()
         }
     }
@@ -365,16 +343,8 @@ fun MainScreen(
         (context.applicationContext as OpenClawApplication).nodeRuntime
     }
     var isConfigured by remember { mutableStateOf(settings.isConfigured()) }
-    var wakeWordEngine by remember { mutableStateOf(settings.wakeWordEngine) }
-    var classicHotwordEnabled by remember { mutableStateOf(settings.hotwordEnabled) }
-    val voiceWakeMode by runtime.voiceWakeMode.collectAsState()
+    var hotwordEnabled by remember { mutableStateOf(settings.hotwordEnabled) }
     val displayWakeWord = settings.getWakeWordDisplayName()
-    
-    val hotwordEnabled = if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
-        voiceWakeMode != VoiceWakeMode.Off
-    } else {
-        classicHotwordEnabled
-    }
     var isAssistantSet by remember { mutableStateOf((context as? MainActivity)?.isAssistantActive() ?: false) }
     val nodeConnected by runtime.isConnected.collectAsState()
     val nodeStatusText by runtime.statusText.collectAsState()
@@ -432,8 +402,7 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isConfigured = settings.isConfigured()
-                wakeWordEngine = settings.wakeWordEngine
-                classicHotwordEnabled = settings.hotwordEnabled
+                hotwordEnabled = settings.hotwordEnabled
                 isAssistantSet = (context as? MainActivity)?.isAssistantActive() ?: false
                 onRefreshDiagnostics()
             }
@@ -494,9 +463,16 @@ fun MainScreen(
             }
 
             // === SYSTEM STATUS DASHBOARD ===
+            val displayStatusText = when (nodeStatusText) {
+                "Operator Online (Node Offline)" -> stringResource(R.string.status_operator_online_node_offline)
+                "Node Online (Operator Offline)" -> stringResource(R.string.status_node_online_operator_offline)
+                "Offline" -> stringResource(R.string.status_offline)
+                else -> nodeStatusText
+            }
+            
             SystemStatusCard(
                 connected = nodeConnected,
-                statusText = nodeStatusText,
+                statusText = displayStatusText,
                 onConnect = { runtime.connectManual() },
                 onDisconnect = { runtime.disconnect() },
                 onOpenSettings = onOpenSettings
@@ -658,12 +634,7 @@ fun MainScreen(
             Text(text = stringResource(R.string.activation_methods), fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.height(12.dp))
 
-            val wakeWords by runtime.wakeWords.collectAsState()
-            val displayWakeWord = if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
-                wakeWords.joinToString(", ").ifBlank { "openclaw" }
-            } else {
-                settings.getWakeWordDisplayName()
-            }
+            val displayWakeWord = settings.getWakeWordDisplayName()
 
             Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CompactActionCard(
@@ -685,7 +656,7 @@ fun MainScreen(
                     switchValue = hotwordEnabled,
                     onSwitchChange = { enabled ->
                         (context as? MainActivity)?.toggleHotwordService(enabled)
-                        classicHotwordEnabled = settings.hotwordEnabled
+                        hotwordEnabled = settings.hotwordEnabled
                     },
                     isActive = hotwordEnabled,
                     showInfoIcon = false

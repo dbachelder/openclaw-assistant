@@ -83,7 +83,6 @@ fun SettingsScreen(
     var resumeLatestSession by remember { mutableStateOf(settings.resumeLatestSession) }
     var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
     var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
-    var wakeWordEngine by remember { mutableStateOf(settings.wakeWordEngine) }
     var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
     var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
@@ -231,10 +230,6 @@ fun SettingsScreen(
                             settings.webhookUrl = httpUrl.trim()
                             settings.authToken = httpToken.trim()
                             
-                            // Update local legacy refs to keep them aligned
-                            webhookUrl = httpUrl.trim()
-                            authToken = httpToken.trim()
-
                             settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
@@ -243,16 +238,14 @@ fun SettingsScreen(
                             settings.resumeLatestSession = resumeLatestSession
                             settings.wakeWordPreset = wakeWordPreset
                             settings.customWakeWord = customWakeWord
-                            settings.wakeWordEngine = wakeWordEngine
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
                             settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
                             settings.useNodeChat = useNodeChat
 
-                            // Stop both engines first, then start the selected one if applicable
+                            // Stop/Restart services
                             HotwordService.stop(context)
                             
-                            // Let the background config propogate to runtime preferences
                             if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
                                 runtime.connectManual()
                             }
@@ -262,8 +255,7 @@ fun SettingsScreen(
                             }
                             onSave()
                         },
-                        // Only disable if the unified URL is blank, but don't strictly require it if Gateway isn't manually used yet
-                        enabled = (!isTesting)
+                        enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpUrl.isNotBlank())
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -372,7 +364,10 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Require TLS (HTTPS)")
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.gateway_use_tls), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.gateway_use_tls_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
                                 Switch(
                                     checked = gatewayTls,
                                     onCheckedChange = { gatewayTls = it; testResult = null }
@@ -419,21 +414,7 @@ fun SettingsScreen(
                         
                         // Gateway Specific Settings
                         if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                            StatusIndicator(
-                                state = if (nodeConnected) ConnectionState.Connected else ConnectionState.Disconnected,
-                                label = if (nodeConnected) stringResource(R.string.connected) else stringResource(R.string.offline)
-                            )
-                            
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            if (!manualEnabledState && !nodeConnected) {
-                                Text(
-                                    text = stringResource(R.string.gateway_discovery_active),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
+                            Spacer(modifier = Modifier.height(16.dp))
 
                             // Foreground Service Toggle
                             Row(
@@ -452,66 +433,6 @@ fun SettingsScreen(
                                         if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
                                     }
                                 )
-                            }
-                            
-                            HorizontalDivider(thickness = 0.5.dp)
-
-                            // Canvas Debug Overlay Toggle
-                            val canvasDebugEnabled by runtime.canvasDebugStatusEnabled.collectAsState()
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(stringResource(R.string.canvas_debug_mode), style = MaterialTheme.typography.bodyLarge)
-                                    Text(stringResource(R.string.canvas_debug_mode_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                }
-                                Switch(
-                                    checked = canvasDebugEnabled,
-                                    onCheckedChange = { runtime.setCanvasDebugStatusEnabled(it) }
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // Connect/Disconnect Actions
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (nodeConnected) {
-                                    OutlinedButton(
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { runtime.disconnect() },
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                    ) {
-                                        Text(stringResource(R.string.disconnect))
-                                    }
-                                } else {
-                                    Button(
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { 
-                                            // Quick start logic using gateway UI
-                                            if (gatewayHost.isBlank()) {
-                                                 Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
-                                                 return@Button
-                                            }
-
-                                            runtime.setManualEnabled(true)
-                                            runtime.setManualHost(gatewayHost.trim())
-                                            runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
-                                            runtime.setManualTls(gatewayTls)
-                                            runtime.setGatewayToken(gatewayToken.trim())
-                                            runtime.connectManual()
-                                            
-                                            Toast.makeText(context, context.getString(R.string.gateway_connecting), Toast.LENGTH_SHORT).show()
-                                            if (nodeForeground) NodeForegroundService.start(context)
-                                        }
-                                    ) {
-                                        Text(stringResource(R.string.connect))
-                                    }
-                                }
                             }
                         }
 
@@ -621,131 +542,9 @@ fun SettingsScreen(
                                 singleLine = true
                             )
                         }
-                    }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // Test Connection Button
-                            Button(
-                                onClick = {
-                                    val testUrlRaw = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                                        val proto = if (gatewayTls) "https://" else "http://"
-                                        val portStr = if ((gatewayPort.toIntOrNull() ?: 18789) > 0) ":${gatewayPort}" else ""
-                                        if (gatewayHost.isNotBlank()) "$proto$gatewayHost$portStr" else ""
-                                    } else {
-                                        httpUrl
-                                    }
-                                    val testTokenRaw = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayToken else httpToken
-
-                                    if (testUrlRaw.isBlank()) return@Button
-                                    scope.launch {
-                                        try {
-                                            isTesting = true
-                                            testResult = null
-                                            // Compute chat completions URL for testing
-                                            val testUrl = testUrlRaw.trimEnd('/').let { url ->
-                                                if (url.contains("/v1/")) url else "$url/v1/chat/completions"
-                                            }
-                                            val result = apiClient.testConnection(testUrl, testTokenRaw.trim())
-                                            result.fold(
-                                                onSuccess = {
-                                                    testResult = TestResult(success = true, message = context.getString(R.string.connected))
-                                                    if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                                                        runtime.setManualHost(gatewayHost.trim())
-                                                        runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
-                                                        runtime.setManualTls(gatewayTls)
-                                                        runtime.setGatewayToken(gatewayToken.trim())
-                                                    } else {
-                                                        settings.webhookUrl = httpUrl.trim()
-                                                        settings.authToken = httpToken.trim()
-                                                    }
-                                                    settings.isVerified = true
-
-                                                    // Fetch agent list via WebSocket
-                                                    scope.launch {
-                                                        isFetchingAgents = true
-                                                        try {
-                                                            val baseUrl = settings.getBaseUrl()
-                                                            val parsedUrl = java.net.URL(baseUrl)
-                                                            val host = parsedUrl.host
-                                                            val useTls = parsedUrl.protocol == "https"
-                                                            val port = if (useTls) {
-                                                                if (parsedUrl.port > 0) parsedUrl.port else 443
-                                                            } else {
-                                                                if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
-                                                            }
-                                                            val token = authToken.takeIf { t -> t.isNotBlank() }
-
-                                                            if (!gatewayClient.isConnected()) {
-                                                                gatewayClient.connect(host, port, token, useTls = useTls)
-                                                                // Wait for connection
-                                                                for (i in 1..20) {
-                                                                    delay(250)
-                                                                    if (gatewayClient.isConnected()) break
-                                                                }
-                                                            }
-
-                                                            if (gatewayClient.isConnected()) {
-                                                                Log.e("SettingsActivity", "Connection successful, fetching agent list...")
-                                                                try {
-                                                                    val agentResult = gatewayClient.getAgentList()
-                                                                    Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
-                                                                } catch (e: Exception) {
-                                                                    Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                                    // Show toast for this error specifically since it's part of the test
-                                                                    Toast.makeText(context, context.getString(R.string.agents_fetch_failed), Toast.LENGTH_LONG).show()
-                                                                }
-                                                            }
-                                                        } catch (e: Exception) {
-                                                            Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                        } finally {
-                                                            isFetchingAgents = false
-                                                        }
-                                                    }
-                                                },
-                                                onFailure = {
-                                                    testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
-                                                }
-                                            )
-                                        } catch (e: Exception) {
-                                            testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
-                                        } finally {
-                                            isTesting = false
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = when {
-                                        testResult?.success == true -> Color(0xFF4CAF50)
-                                        testResult?.success == false -> MaterialTheme.colorScheme.error
-                                        else -> MaterialTheme.colorScheme.primary
-                                    }
-                                ),
-                                enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpUrl.isNotBlank()) && !isTesting
-                            ) {
-                                if (isTesting) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(stringResource(R.string.testing))
-                                } else {
-                                    Icon(
-                                        when {
-                                            testResult?.success == true -> Icons.Default.Check
-                                            testResult?.success == false -> Icons.Default.Error
-                                            else -> Icons.Default.NetworkCheck
-                                        },
-                                        contentDescription = null
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(testResult?.message ?: stringResource(R.string.test_connection_button))
-                                }
-                            }
-                        }
+                    } 
+                }
+                        Spacer(modifier = Modifier.height(24.dp))
                     } // end Column
                 } // end Card
             } // end CollapsibleSection for Unified Connection

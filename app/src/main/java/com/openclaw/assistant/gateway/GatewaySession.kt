@@ -56,7 +56,7 @@ class GatewaySession(
   private val scope: CoroutineScope,
   private val identityStore: DeviceIdentityStore,
   private val deviceAuthStore: DeviceAuthStore,
-  private val onConnected: (serverName: String?, remoteAddress: String?, mainSessionKey: String?) -> Unit,
+  private val onConnected: (serverName: String?, remoteAddress: String?, serverVersion: String?, mainSessionKey: String?) -> Unit,
   private val onDisconnected: (message: String) -> Unit,
   private val onEvent: (event: String, payloadJson: String?) -> Unit,
   private val onInvoke: (suspend (InvokeRequest) -> InvokeResult)? = null,
@@ -314,7 +314,9 @@ class GatewaySession(
       }
       val payloadJson = res.payloadJson ?: throw IllegalStateException("connect failed: missing payload")
       val obj = json.parseToJsonElement(payloadJson).asObjectOrNull() ?: throw IllegalStateException("connect failed")
-      val serverName = obj["server"].asObjectOrNull()?.get("host").asStringOrNull()
+      val serverObj = obj["server"].asObjectOrNull()
+      val serverName = serverObj?.get("host").asStringOrNull()
+      val serverVersion = serverObj?.get("version").asStringOrNull()
       val authObj = obj["auth"].asObjectOrNull()
       val deviceToken = authObj?.get("deviceToken").asStringOrNull()
       val authRole = authObj?.get("role").asStringOrNull() ?: options.role
@@ -327,7 +329,7 @@ class GatewaySession(
         obj["snapshot"].asObjectOrNull()
           ?.get("sessionDefaults").asObjectOrNull()
       mainSessionKey = sessionDefaults?.get("mainSessionKey").asStringOrNull()
-      onConnected(serverName, remoteAddress, mainSessionKey)
+      onConnected(serverName, remoteAddress, serverVersion, mainSessionKey)
       connectDeferred.complete(Unit)
     }
 
