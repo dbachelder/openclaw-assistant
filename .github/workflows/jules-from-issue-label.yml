@@ -36,8 +36,11 @@ jobs:
           KEY_USED=""
           SESSION_ID=""
           for KEY_IDX in 1 2 3; do
-            KEY_VAR="JULES_API_KEY_${KEY_IDX}"
-            KEY="${!KEY_VAR:-}"
+            case $KEY_IDX in
+              1) KEY="$JULES_API_KEY_1" ;;
+              2) KEY="$JULES_API_KEY_2" ;;
+              3) KEY="$JULES_API_KEY_3" ;;
+            esac
             [ -z "$KEY" ] && continue
             HTTP_CODE=$(curl -sS -o /tmp/resp.json -w "%{http_code}" -X POST "https://jules.googleapis.com/v1alpha/sessions" -H "Content-Type: application/json" -H "x-goog-api-key: $KEY" --data "$PAYLOAD" || true)
             if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
