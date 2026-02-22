@@ -97,6 +97,10 @@ class GatewayClient(context: android.content.Context) {
     var mainSessionKey: String? = null
         private set
 
+    /** Whether a voice interaction session is currently active. */
+    @Volatile
+    var isSessionActive: Boolean = false
+
     val deviceId: String?
         get() = deviceIdentity.deviceId
 
@@ -197,6 +201,21 @@ class GatewayClient(context: android.content.Context) {
             request("chat.abort", params, timeoutMs = 5_000)
         } catch (e: Exception) {
             Log.w(TAG, "abort failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Send tool result back to the gateway.
+     */
+    suspend fun sendToolResult(toolCallId: String, result: String) {
+        val params = JsonObject().apply {
+            addProperty("toolCallId", toolCallId)
+            addProperty("result", result)
+        }
+        try {
+            request("tool.result", params, timeoutMs = 10_000)
+        } catch (e: Exception) {
+            Log.w(TAG, "tool.result failed: ${e.message}")
         }
     }
 

@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -76,12 +77,28 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var isRetry = false
     private lateinit var settings: SettingsRepository
 
-    private val permissionLauncher = registerForActivityResult(
+    private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (!granted) {
             if (!ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-                showPermissionSettingsDialog()
+                showPermissionSettingsDialog(
+                    R.string.mic_permission_required,
+                    R.string.mic_permission_denied_permanently
+                )
+            }
+        }
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            if (!ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+                showPermissionSettingsDialog(
+                    R.string.camera_permission_required,
+                    R.string.camera_permission_denied_message
+                )
             }
         }
     }
@@ -94,10 +111,29 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // Try Google TTS first for better compatibility on Chinese ROMs
         initializeTTS()
 
-        // Request Microphone permission if not granted
+        // Request permissions if not granted
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+
+        // Observe tool calls from ViewModel and execute them with Activity lifecycle
+        lifecycleScope.launch {
+            viewModel.toolEvents.collect { toolCall ->
+                Log.d(TAG, "Tool call received in Activity: ${toolCall.name}")
+
+                if (toolCall.name.startsWith("camera.") ||
+                    (toolCall.name == "node.invoke" && toolCall.args?.contains("camera.") == true)) {
+                    if (checkCameraPermission()) {
+                        viewModel.executeTool(toolCall, this@ChatActivity)
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        // Note: after granting, the agent might need to retry the call.
+                    }
+                } else {
+                    viewModel.executeTool(toolCall, this@ChatActivity)
+                }
+            }
         }
 
         setContent {
@@ -183,19 +219,23 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    }
+
     private fun requestMicPermissionForListening() {
         if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else if (!checkPermission()) {
             // First-time request or permanently denied
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    private fun showPermissionSettingsDialog() {
+    private fun showPermissionSettingsDialog(titleRes: Int, messageRes: Int) {
         android.app.AlertDialog.Builder(this)
-            .setTitle(getString(R.string.mic_permission_required))
-            .setMessage(getString(R.string.mic_permission_denied_permanently))
+            .setTitle(getString(titleRes))
+            .setMessage(getString(messageRes))
             .setPositiveButton(getString(R.string.open_settings)) { _, _ ->
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)

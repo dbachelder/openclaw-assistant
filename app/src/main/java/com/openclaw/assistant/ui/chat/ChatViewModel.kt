@@ -6,12 +6,14 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
+import com.openclaw.assistant.tool.ToolDispatcher
 import com.openclaw.assistant.speech.SpeechResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -32,6 +34,8 @@ data class ChatMessage(
     val isUser: Boolean,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+data class ToolCall(val name: String, val args: String?, val toolCallId: String?)
 
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
@@ -58,6 +62,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val gatewayClient = GatewayClient.getInstance()
     private val speechManager = SpeechRecognizerManager(application)
     private val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
+    private val toolDispatcher = ToolDispatcher(application)
+
+    private val _toolEvents = MutableSharedFlow<ToolCall>(extraBufferCapacity = 16)
+    val toolEvents = _toolEvents.asSharedFlow()
 
     private var thinkingSoundJob: Job? = null
 
@@ -140,6 +148,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(
                     availableAgents = agentListResult?.agents ?: emptyList()
                 )}
+            }
+        }
+
+        // Observe tool calls from gateway
+        viewModelScope.launch {
+            gatewayClient.agentEvents.collect { event ->
+                // If a voice session is active, let it handle the tools to avoid duplicate execution
+                if (gatewayClient.isSessionActive) {
+                    Log.d(TAG, "Ignoring tool event in ChatViewModel because voice session is active")
+                    return@collect
+                }
+
+                if (event.stream == "tool" && event.data?.phase == "start") {
+                    val name = event.data.name ?: return@collect
+                    val toolCallId = event.data.toolCallId
+                    _toolEvents.emit(ToolCall(name, event.data.text, toolCallId))
+                }
             }
         }
 
@@ -231,6 +256,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAgent(agentId: String?) {
         _uiState.update { it.copy(selectedAgentId = agentId) }
+    }
+
+    fun executeTool(toolCall: ToolCall, lifecycleOwner: LifecycleOwner) {
+        viewModelScope.launch {
+            try {
+                val result = toolDispatcher.dispatch(toolCall.name, toolCall.args, lifecycleOwner)
+                if (toolCall.toolCallId != null) {
+                    gatewayClient.sendToolResult(toolCall.toolCallId, result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Tool execution failed: ${e.message}")
+                if (toolCall.toolCallId != null) {
+                    gatewayClient.sendToolResult(toolCall.toolCallId, "Error: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun getEffectiveAgentId(): String? {

@@ -31,6 +31,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.Brush
@@ -43,6 +46,8 @@ import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.TTSManager
 import com.openclaw.assistant.speech.SpeechResult
 import com.openclaw.assistant.speech.TTSUtils
+import com.openclaw.assistant.tool.ToolDispatcher
+import com.openclaw.assistant.gateway.GatewayClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -69,6 +74,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     private val apiClient = OpenClawClient()
     private lateinit var speechManager: SpeechRecognizerManager
     private lateinit var ttsManager: TTSManager
+    private lateinit var toolDispatcher: ToolDispatcher
     
     // Repository
     private val chatRepository = com.openclaw.assistant.data.repository.ChatRepository.getInstance(context)
@@ -109,6 +115,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
         speechManager = SpeechRecognizerManager(context)
         ttsManager = TTSManager(context)
+        toolDispatcher = ToolDispatcher(context)
         Log.e(TAG, "Session onCreate completed")
     }
 
@@ -187,6 +194,44 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
 
         // PAUSE Hotword Service to prevent microphone conflict
         sendPauseBroadcast()
+        GatewayClient.getInstance(context).isSessionActive = true
+
+        // Observe tool calls from gateway
+        scope.launch {
+            GatewayClient.getInstance(context).agentEvents.collect { event ->
+                if (event.stream == "tool" && event.data?.phase == "start") {
+                    val name = event.data.name ?: return@collect
+                    val toolCallId = event.data.toolCallId
+
+                    // Permission check for camera tools
+                    if (name.startsWith("camera.") || (name == "node.invoke" && event.data.text?.contains("camera.") == true)) {
+                        if (!checkCameraPermission()) {
+                            val msg = context.getString(R.string.camera_permission_required)
+                            Log.e(TAG, "Camera permission missing for tool: $name")
+                            currentState.value = AssistantState.ERROR
+                            errorMessage.value = msg
+                            if (toolCallId != null) {
+                                GatewayClient.getInstance(context).sendToolResult(toolCallId, "Error: $msg")
+                            }
+                            return@collect
+                        }
+                    }
+
+                    try {
+                        Log.d(TAG, "Executing tool call: $name")
+                        val result = toolDispatcher.dispatch(name, event.data.text, this@OpenClawSession)
+                        if (toolCallId != null) {
+                            GatewayClient.getInstance(context).sendToolResult(toolCallId, result)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tool execution failed", e)
+                        if (toolCallId != null) {
+                            GatewayClient.getInstance(context).sendToolResult(toolCallId, "Error: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
         
         // SESSION MANAGEMENT
         scope.launch {
@@ -223,6 +268,8 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
         super.onHide()
         lifecycleRegistry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_STOP)
+
+        GatewayClient.getInstance(context).isSessionActive = false
 
         // Clean up audio resources
         abandonAudioFocus()
@@ -502,6 +549,10 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     }
 
 
+
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    }
 
     private fun abandonAudioFocus() {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager

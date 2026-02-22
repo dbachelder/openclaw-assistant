@@ -4,6 +4,10 @@
 
     <!-- Voice recognition -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     
     <!-- Network communication -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -12,6 +16,7 @@
     <!-- Foreground service (Ambient listening) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <!-- Battery optimization exclusion request -->
