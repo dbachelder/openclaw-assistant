@@ -297,7 +297,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Called from ChatActivity.onCreate when a specific session ID is provided via Intent.
     // Must be called before the init coroutine runs (i.e., synchronously after ViewModel creation).
     fun selectSessionOnStart(sessionId: String) {
-        if (!useNodeChat) {
+        if (useNodeChat) {
+            nodeRuntime.switchChatSession(sessionId)
+        } else {
             _currentSessionId.value = sessionId
             settings.sessionId = sessionId
         }
