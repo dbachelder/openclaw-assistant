@@ -86,6 +86,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // Whether selectSessionOnStart() was called (session set via Intent before init completes)
     private var sessionSelectedViaIntent = false
+
+    // Set when user sends a message in nodeChat mode; cleared after TTS is triggered.
+    // Avoids race condition between pendingRunCount→0 and chatMessages emitting.
+    private var pendingNodeChatTts = false
     
     // Sync current session with Settings if needed, or just let UI drive it?
     // Let's load the last one if available, or create new.
@@ -134,14 +138,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 var previousCount = 0
                 nodeRuntime.chatMessages.collect { messages ->
                     val uiMessages = messages.map { it.toUiChatMessage() }
-                    val wasThinking = _uiState.value.isThinking
                     _uiState.update { state ->
                         state.copy(messages = uiMessages)
                     }
-                    // Trigger TTS when a new assistant message arrives and we were thinking
-                    if (uiMessages.size > previousCount && wasThinking) {
+                    // Trigger TTS when a new assistant message arrives after user sent a message
+                    if (uiMessages.size > previousCount && pendingNodeChatTts) {
                         val lastMessage = uiMessages.lastOrNull()
                         if (lastMessage != null && !lastMessage.isUser) {
+                            pendingNodeChatTts = false
                             stopThinkingSound()
                             _uiState.update { it.copy(isThinking = false) }
                             afterResponseReceived(lastMessage.text)
@@ -150,12 +154,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     previousCount = uiMessages.size
                 }
             }
-            // Use pendingRunCount as the authoritative source for isThinking
+            // Use pendingRunCount as the authoritative source for isThinking,
+            // but only while we are still waiting for a response (pendingNodeChatTts=true).
+            // Once the response message arrives (pendingNodeChatTts=false), do not
+            // re-set isThinking=true even if runId cleanup is delayed.
             viewModelScope.launch {
                 nodeRuntime.pendingRunCount.collect { count ->
-                    val isThinking = count > 0
-                    if (!isThinking) stopThinkingSound()
-                    _uiState.update { it.copy(isThinking = isThinking) }
+                    if (count == 0) {
+                        // Run finished: clear thinking + pending flag
+                        pendingNodeChatTts = false
+                        stopThinkingSound()
+                        _uiState.update { it.copy(isThinking = false) }
+                    } else if (pendingNodeChatTts) {
+                        // Still waiting for response: set thinking
+                        _uiState.update { it.copy(isThinking = true) }
+                    }
+                    // if count > 0 but pendingNodeChatTts=false: response already received,
+                    // do NOT flip isThinking back to true
                 }
             }
             viewModelScope.launch {
@@ -386,7 +401,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (text.isBlank()) return
 
         if (useNodeChat) {
+            // Check gateway health before sending; if not ready, show a clear error
+            // instead of letting the message silently fail inside ChatController.
+            if (!nodeRuntime.chatHealthOk.value) {
+                _uiState.update { it.copy(error = "接続が確立されていません。しばらく待ってから再送信してください。") }
+                return
+            }
             _uiState.update { it.copy(error = null) }
+            pendingNodeChatTts = true
             if (lastInputWasVoice) {
                 toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
             }
@@ -399,6 +421,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         attachments = emptyList()
                     )
                 } catch (e: Exception) {
+                    pendingNodeChatTts = false
                     stopThinkingSound()
                     _uiState.update { it.copy(isThinking = false, error = e.message) }
                 }
