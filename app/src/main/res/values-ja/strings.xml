@@ -49,14 +49,14 @@
     <string name="connected_to_openclaw">OpenClawに接続済み</string>
     <string name="permissions_required">権限が必要です</string>
     <string name="could_not_open_settings">設定を開けませんでした</string>
-    <string name="hotword_started">ホットワード検知を開始しました</string>
-    <string name="hotword_stopped">ホットワード検知を停止しました</string>
+    <string name="hotword_started">ウェイクワード検知を開始しました</string>
+    <string name="hotword_stopped">ウェイクワード検知を停止しました</string>
     <string name="saved">保存しました</string>
     
     <!-- How to Use -->
     <string name="how_to_use">使い方</string>
     <string name="got_it">了解</string>
-    <string name="step_1">ホームボタン長押し、またはウェイクワードを話す</string>
+    <string name="step_1">ホームボタン長押し、または「%s」と話しかける</string>
     <string name="step_2">質問やリクエストを話す</string>
     <string name="step_3">OpenClawが音声で応答</string>
     <string name="step_4">会話を続ける（セッション維持）</string>

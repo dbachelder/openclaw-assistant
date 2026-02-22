@@ -368,6 +368,7 @@ fun MainScreen(
     var wakeWordEngine by remember { mutableStateOf(settings.wakeWordEngine) }
     var classicHotwordEnabled by remember { mutableStateOf(settings.hotwordEnabled) }
     val voiceWakeMode by runtime.voiceWakeMode.collectAsState()
+    val displayWakeWord = settings.getWakeWordDisplayName()
     
     val hotwordEnabled = if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
         voiceWakeMode != VoiceWakeMode.Off
@@ -394,7 +395,7 @@ fun MainScreen(
     // Permission error observation
     val gatewayClient = remember { GatewayClient.getInstance() }
     val missingScopeError by gatewayClient.missingScopeError.collectAsState()
-    val isPairingRequired by gatewayClient.isPairingRequired.collectAsState()
+    val isPairingRequired by runtime.isPairingRequired.collectAsState()
     val isOperatorOffline by runtime.isOperatorOffline.collectAsState()
     val deviceId = gatewayClient.deviceId
     val nodeDeviceId = runtime.deviceId
@@ -738,7 +739,7 @@ fun MainScreen(
     }
 
     if (showTroubleshooting) TroubleshootingDialog(onDismiss = { showTroubleshooting = false })
-    if (showHowToUse) HowToUseDialog(onDismiss = { showHowToUse = false })
+    if (showHowToUse) HowToUseDialog(displayWakeWord = displayWakeWord, onDismiss = { showHowToUse = false })
     if (showLocationInfo) {
         AlertDialog(
             onDismissRequest = { showLocationInfo = false },
@@ -1284,11 +1285,26 @@ fun UsageStep(number: String, text: String) {
 }
 
 @Composable
-fun HowToUseDialog(onDismiss: () -> Unit) {
+fun HowToUseDialog(displayWakeWord: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.how_to_use)) }, text = { Column { (1..4).forEach { 
-        val resId = context.resources.getIdentifier("step_$it", "string", context.packageName)
-        UsageStep(it.toString(), stringResource(resId)) } } }, confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.got_it)) } })
+    AlertDialog(
+        onDismissRequest = onDismiss, 
+        title = { Text(stringResource(R.string.how_to_use)) }, 
+        text = { 
+            Column { 
+                (1..4).forEach { i ->
+                    val resId = context.resources.getIdentifier("step_$i", "string", context.packageName)
+                    val text = if (i == 1) {
+                        stringResource(resId, displayWakeWord)
+                    } else {
+                        stringResource(resId)
+                    }
+                    UsageStep(i.toString(), text) 
+                } 
+            } 
+        }, 
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.got_it)) } }
+    )
 }
 
 @Composable

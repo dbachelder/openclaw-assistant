@@ -210,6 +210,7 @@ class NodeRuntime(context: Context) {
         operatorStatusText = "Connected"
         _serverName.value = name
         _remoteAddress.value = remote
+        _isPairingRequired.value = false
         applyMainSessionKey(mainSessionKey)
         updateStatus()
         scope.launch { refreshBrandingFromGateway() }
@@ -241,6 +242,7 @@ class NodeRuntime(context: Context) {
       onConnected = { _, _, _ ->
         nodeConnected = true
         nodeStatusText = "Connected"
+        _isPairingRequired.value = false
         updateStatus()
         maybeNavigateToA2uiOnConnect()
       },
@@ -283,6 +285,20 @@ class NodeRuntime(context: Context) {
   private fun updateStatus() {
     _isConnected.value = operatorConnected
     _isOperatorOffline.value = !operatorConnected && nodeConnected
+    
+    val pairingKeyword = "pairing required"
+    val paringKeyword = "paring required" // Handle common typo in gateway or its libraries
+    val isErrorPairing = operatorStatusText.contains(pairingKeyword, ignoreCase = true) || 
+                         operatorStatusText.contains(paringKeyword, ignoreCase = true) ||
+                         nodeStatusText.contains(pairingKeyword, ignoreCase = true) ||
+                         nodeStatusText.contains(paringKeyword, ignoreCase = true)
+    
+    if (isErrorPairing) {
+        _isPairingRequired.value = true
+    } else if (operatorConnected || nodeConnected) {
+        _isPairingRequired.value = false
+    }
+
     _statusText.value =
       when {
         operatorConnected && nodeConnected -> "Connected"
