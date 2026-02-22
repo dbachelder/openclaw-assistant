@@ -82,6 +82,7 @@ fun SettingsScreen(
     var resumeLatestSession by remember { mutableStateOf(settings.resumeLatestSession) }
     var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
     var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
+    var wakeWordEngine by remember { mutableStateOf(settings.wakeWordEngine) }
     var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
     var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
@@ -129,10 +130,25 @@ fun SettingsScreen(
     val manualPortState by runtime.manualPort.collectAsState()
     val manualTlsState by runtime.manualTls.collectAsState()
     val gatewayTokenState by runtime.gatewayToken.collectAsState()
-
-    var manualHostInput by remember(manualHostState) { mutableStateOf(manualHostState) }
-    var manualPortInput by remember(manualPortState) { mutableStateOf(manualPortState.toString()) }
-    var gatewayTokenInput by remember(gatewayTokenState) { mutableStateOf(gatewayTokenState) }
+    
+    // Unified inputs
+    var connectionType by remember { mutableStateOf(settings.connectionType) }
+    var unifiedUrl by remember(connectionType, webhookUrl, manualHostState, manualPortState, manualTlsState) { 
+        mutableStateOf(
+            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                val proto = if (manualTlsState) "https://" else "http://"
+                val portStr = if (manualPortState > 0) ":$manualPortState" else ""
+                if (manualHostState.isNotBlank()) "$proto$manualHostState$portStr" else ""
+            } else {
+                webhookUrl
+            }
+        ) 
+    }
+    var unifiedToken by remember(connectionType, authToken, gatewayTokenState) {
+        mutableStateOf(
+            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayTokenState else authToken
+        )
+    }
 
     LaunchedEffect(Unit) {
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
@@ -196,8 +212,32 @@ fun SettingsScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            settings.webhookUrl = webhookUrl
-                            settings.authToken = authToken.trim()
+                            settings.connectionType = connectionType
+                            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                // Parse Unified URL into Host, Port, TLS
+                                val urlTrimmed = unifiedUrl.trim().trimEnd('/')
+                                val isHttps = urlTrimmed.startsWith("https://", ignoreCase = true)
+                                val schemeRemoved = urlTrimmed.removePrefix("http://").removePrefix("https://")
+                                val parts = schemeRemoved.split(":", limit = 2)
+                                val host = parts.getOrNull(0) ?: ""
+                                val port = parts.getOrNull(1)?.toIntOrNull() ?: if (isHttps) 443 else 18789
+
+                                runtime.setManualEnabled(true)
+                                runtime.setManualHost(host)
+                                runtime.setManualPort(port)
+                                runtime.setManualTls(isHttps)
+                                runtime.setGatewayToken(unifiedToken.trim())
+                                
+                                settings.webhookUrl = webhookUrl // Keep previous legacy value
+                                settings.authToken = authToken.trim()
+                            } else {
+                                settings.webhookUrl = unifiedUrl.trim()
+                                settings.authToken = unifiedToken.trim()
+                                // keep legacy logic aligned
+                                webhookUrl = unifiedUrl.trim()
+                                authToken = unifiedToken.trim()
+                            }
+
                             settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
@@ -206,16 +246,32 @@ fun SettingsScreen(
                             settings.resumeLatestSession = resumeLatestSession
                             settings.wakeWordPreset = wakeWordPreset
                             settings.customWakeWord = customWakeWord
+                            settings.wakeWordEngine = wakeWordEngine
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
                             settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
                             settings.useNodeChat = useNodeChat
+
+                            // Stop both engines first, then start the selected one if applicable
+                            HotwordService.stop(context)
+                            runtime.setVoiceWakeMode(VoiceWakeMode.Off)
+                            
+                            // Let the background config propogate to runtime preferences
+                            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                runtime.connectManual()
+                            }
+
                             if (settings.hotwordEnabled) {
-                                HotwordService.start(context)
+                                if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_CLASSIC) {
+                                    HotwordService.start(context)
+                                } else if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                                    // voiceWakeMode is restored/started by toggle in MainActivity
+                                }
                             }
                             onSave()
                         },
-                        enabled = webhookUrl.isNotBlank() && !isTesting
+                        // Only disable if the unified URL is blank, but don't strictly require it if Gateway isn't manually used yet
+                        enabled = (!isTesting)
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -236,10 +292,10 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-            // === DEVICE NODE (GATEWAY) SECTION ===
+            // === UNIFIED CONNECTION SECTION ===
             CollapsibleSection(
-                title = stringResource(R.string.settings_gateway_title),
-                subtitle = if (nodeConnected) nodeStatus.ifBlank { stringResource(R.string.connected) } else stringResource(R.string.disconnected),
+                title = stringResource(R.string.settings_gateway_title).replace("Gateway", "Connection"),
+                subtitle = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY && nodeConnected) nodeStatus.ifBlank { stringResource(R.string.connected) } else "",
                 initiallyExpanded = true
             ) {
                 Card(
@@ -250,297 +306,204 @@ fun SettingsScreen(
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        StatusIndicator(
-                            state = if (nodeConnected) ConnectionState.Connected else ConnectionState.Disconnected,
-                            label = if (nodeConnected) stringResource(R.string.connected) else stringResource(R.string.offline)
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Discovery Status
-                        if (!manualEnabledState && !nodeConnected) {
-                            Text(
-                                text = stringResource(R.string.gateway_discovery_active),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-
-                        // Manual Connection Switch
+                        
+                        // Connection Type Selector
+                        Text("Connection Type", style = MaterialTheme.typography.labelLarge)
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.gateway_manual_connection), style = MaterialTheme.typography.bodyLarge)
-                                Text(stringResource(R.string.gateway_manual_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Switch(
-                                checked = manualEnabledState,
-                                onCheckedChange = { runtime.setManualEnabled(it) }
+                            FilterChip(
+                                selected = connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY,
+                                onClick = { 
+                                    connectionType = SettingsRepository.CONNECTION_TYPE_GATEWAY
+                                    // update unified fields with gateway values
+                                    val proto = if (manualTlsState) "https://" else "http://"
+                                    val portStr = if (manualPortState > 0) ":$manualPortState" else ""
+                                    unifiedUrl = if (manualHostState.isNotBlank()) "$proto$manualHostState$portStr" else ""
+                                    unifiedToken = gatewayTokenState
+                                },
+                                label = { Text("Gateway") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = connectionType == SettingsRepository.CONNECTION_TYPE_HTTP,
+                                onClick = { 
+                                    connectionType = SettingsRepository.CONNECTION_TYPE_HTTP
+                                    unifiedUrl = webhookUrl
+                                    unifiedToken = authToken
+                                },
+                                label = { Text("HTTP") },
+                                modifier = Modifier.weight(1f)
                             )
                         }
 
-                        if (manualEnabledState) {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Unified URL and Token fields
+                        OutlinedTextField(
+                            value = unifiedUrl,
+                            onValueChange = { 
+                                unifiedUrl = it
+                                testResult = null
+                            },
+                            label = { Text(stringResource(R.string.webhook_url_label)) },
+                            placeholder = { 
+                                if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                    Text("http://192.168.1.100:18789")
+                                } else {
+                                    Text(stringResource(R.string.webhook_url_hint))
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = unifiedToken,
+                            onValueChange = { 
+                                unifiedToken = it.trim()
+                                testResult = null
+                            },
+                            label = { Text(stringResource(R.string.auth_token_label)) },
+                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                    Icon(
+                                        if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = null
+                                    )
+                                }
+                            },
+                            visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        
+                        // Gateway Specific Settings
+                        if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                            StatusIndicator(
+                                state = if (nodeConnected) ConnectionState.Connected else ConnectionState.Disconnected,
+                                label = if (nodeConnected) stringResource(R.string.connected) else stringResource(R.string.offline)
+                            )
+                            
                             Spacer(modifier = Modifier.height(12.dp))
+                            
+                            if (!manualEnabledState && !nodeConnected) {
+                                Text(
+                                    text = stringResource(R.string.gateway_discovery_active),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
 
-                            OutlinedTextField(
-                                value = manualHostInput,
-                                onValueChange = { manualHostInput = it.trim() },
-                                label = { Text(stringResource(R.string.gateway_host)) },
-                                placeholder = { Text("192.168.1.100") },
-                                leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            val portInt = manualPortInput.toIntOrNull()
-                            val isPortValid = portInt != null && portInt in 1..65535
-                            OutlinedTextField(
-                                value = manualPortInput,
-                                onValueChange = { manualPortInput = it.filter { ch -> ch.isDigit() } },
-                                label = { Text(stringResource(R.string.gateway_port)) },
-                                placeholder = { Text("18789") },
-                                leadingIcon = { Icon(Icons.Default.Numbers, contentDescription = null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                isError = manualPortInput.isNotEmpty() && !isPortValid,
-                                supportingText = if (manualPortInput.isNotEmpty() && !isPortValid) {
-                                    { Text(stringResource(R.string.gateway_port_error)) }
-                                } else null,
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            OutlinedTextField(
-                                value = gatewayTokenInput,
-                                onValueChange = { gatewayTokenInput = it.trim() },
-                                label = { Text(stringResource(R.string.gateway_token)) },
-                                leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                                trailingIcon = {
-                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
-                                        Icon(
-                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                            contentDescription = null
-                                        )
-                                    }
-                                },
-                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
+                            // Foreground Service Toggle
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(stringResource(R.string.gateway_use_tls), style = MaterialTheme.typography.bodyLarge)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.gateway_foreground_service), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.gateway_foreground_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
                                 Switch(
-                                    checked = manualTlsState,
-                                    onCheckedChange = { runtime.setManualTls(it) }
+                                    checked = nodeForeground,
+                                    onCheckedChange = { enabled ->
+                                        runtime.setForeground(enabled)
+                                        if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
+                                    }
                                 )
                             }
                             
-                            Spacer(modifier = Modifier.height(12.dp))
+                            HorizontalDivider(thickness = 0.5.dp)
 
+                            // Canvas Debug Overlay Toggle
+                            val canvasDebugEnabled by runtime.canvasDebugStatusEnabled.collectAsState()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.canvas_debug_mode), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.canvas_debug_mode_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                                Switch(
+                                    checked = canvasDebugEnabled,
+                                    onCheckedChange = { runtime.setCanvasDebugStatusEnabled(it) }
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Connect/Disconnect Actions
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                OutlinedButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        val port = manualPortInput.toIntOrNull()
-                                        if (manualHostInput.isBlank() || port == null || port !in 1..65535) {
-                                            Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            runtime.setManualHost(manualHostInput)
-                                            runtime.setManualPort(port)
-                                            runtime.setGatewayToken(gatewayTokenInput)
-                                            Toast.makeText(context, context.getString(R.string.gateway_settings_applied), Toast.LENGTH_SHORT).show()
-                                        }
+                                if (nodeConnected) {
+                                    OutlinedButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { runtime.disconnect() },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                    ) {
+                                        Text(stringResource(R.string.disconnect))
                                     }
-                                ) {
-                                    Text(stringResource(R.string.apply))
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Connect/Disconnect Actions
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (nodeConnected) {
-                                OutlinedButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { runtime.disconnect() },
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Text(stringResource(R.string.disconnect))
-                                }
-                            } else {
-                                Button(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { 
-                                        if (manualEnabledState) {
-                                            val port = manualPortInput.toIntOrNull()
-                                            if (manualHostInput.isBlank() || port == null || port !in 1..65535) {
-                                                Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
-                                                return@Button
+                                } else {
+                                    Button(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { 
+                                            // Quick start logic using unified UI, it mirrors save button
+                                            val urlTrimmed = unifiedUrl.trim().trimEnd('/')
+                                            if (urlTrimmed.isBlank()) {
+                                                 Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
+                                                 return@Button
                                             }
-                                            runtime.setManualHost(manualHostInput)
+                                            val isHttps = urlTrimmed.startsWith("https://", ignoreCase = true)
+                                            val schemeRemoved = urlTrimmed.removePrefix("http://").removePrefix("https://")
+                                            val parts = schemeRemoved.split(":", limit = 2)
+                                            val host = parts.getOrNull(0) ?: ""
+                                            val port = parts.getOrNull(1)?.toIntOrNull() ?: if (isHttps) 443 else 18789
+
+                                            runtime.setManualEnabled(true)
+                                            runtime.setManualHost(host)
                                             runtime.setManualPort(port)
-                                            runtime.setGatewayToken(gatewayTokenInput)
+                                            runtime.setManualTls(isHttps)
+                                            runtime.setGatewayToken(unifiedToken.trim())
                                             runtime.connectManual()
+                                            
                                             Toast.makeText(context, context.getString(R.string.gateway_connecting), Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            // Trigger discovery or auto-connect logic if available
-                                            Toast.makeText(context, context.getString(R.string.gateway_discovery_hint), Toast.LENGTH_SHORT).show()
+                                            if (nodeForeground) NodeForegroundService.start(context)
                                         }
-                                        if (nodeForeground) NodeForegroundService.start(context)
+                                    ) {
+                                        Text(stringResource(R.string.connect))
                                     }
-                                ) {
-                                    Text(stringResource(R.string.connect))
                                 }
                             }
                         }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        HorizontalDivider(thickness = 0.5.dp)
-                        Spacer(modifier = Modifier.height(12.dp))
 
-                        // Foreground Service Toggle
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.gateway_foreground_service), style = MaterialTheme.typography.bodyLarge)
-                                Text(stringResource(R.string.gateway_foreground_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Switch(
-                                checked = nodeForeground,
-                                onCheckedChange = { enabled ->
-                                    runtime.setForeground(enabled)
-                                    if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
-                                }
+                        // HTTP Specific Settings
+                        if (connectionType == SettingsRepository.CONNECTION_TYPE_HTTP) {
+                            Text(
+                                text = stringResource(R.string.settings_legacy_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 12.dp, top = 12.dp)
                             )
-                        }
-
-                        // Chat Integration Toggle
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.gateway_use_node_chat), style = MaterialTheme.typography.bodyLarge)
-                                Text(stringResource(R.string.gateway_use_node_chat_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Switch(
-                                checked = useNodeChat,
-                                onCheckedChange = { useNodeChat = it }
-                            )
-                        }
-
-                        HorizontalDivider(thickness = 0.5.dp)
-
-                        // Canvas Debug Overlay Toggle
-                        val canvasDebugEnabled by runtime.canvasDebugStatusEnabled.collectAsState()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.canvas_debug_mode), style = MaterialTheme.typography.bodyLarge)
-                                Text(stringResource(R.string.canvas_debug_mode_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Switch(
-                                checked = canvasDebugEnabled,
-                                onCheckedChange = { runtime.setCanvasDebugStatusEnabled(it) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // === LEGACY CONNECTION SECTION ===
-            CollapsibleSection(title = stringResource(R.string.settings_legacy_title), collapsible = true, initiallyExpanded = false) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f) // Dimmer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.settings_legacy_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-
-                    // Webhook URL
-                    OutlinedTextField(
-                        value = webhookUrl,
-                        onValueChange = { 
-                            webhookUrl = it
-                            testResult = null
-                        },
-                        label = { Text(stringResource(R.string.webhook_url_label) + " *") },
-                        placeholder = { Text(stringResource(R.string.webhook_url_hint)) },
-                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        isError = webhookUrl.isBlank()
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Auth Token
-                    OutlinedTextField(
-                        value = authToken,
-                        onValueChange = { 
-                            authToken = it.trim()
-                            testResult = null
-                        },
-                        label = { Text(stringResource(R.string.auth_token_label)) },
-                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = { showAuthToken = !showAuthToken }) {
-                                Icon(
-                                    if (showAuthToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = null
-                                )
-                            }
-                        },
-                        visualTransformation = if (showAuthToken) VisualTransformation.None else PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Default Agent
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        if (availableAgents.isNotEmpty()) {
+                            
+                            // Default Agent
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (availableAgents.isNotEmpty()) {
                             // Dropdown when agents are loaded
                             ExposedDropdownMenuBox(
                                 expanded = showAgentMenu,
@@ -637,116 +600,158 @@ fun SettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                    // Test Connection Button
-                    Button(
-                        onClick = {
-                            if (webhookUrl.isBlank()) return@Button
-                            scope.launch {
-                                try {
-                                    isTesting = true
-                                    testResult = null
-                                    // Compute chat completions URL for testing
-                                    val testUrl = webhookUrl.trimEnd('/').let { url ->
-                                        if (url.contains("/v1/")) url else "$url/v1/chat/completions"
-                                    }
-                                    val result = apiClient.testConnection(testUrl, authToken.trim())
-                                    result.fold(
-                                        onSuccess = {
-                                            testResult = TestResult(success = true, message = context.getString(R.string.connected))
-                                            settings.webhookUrl = webhookUrl
-                                            settings.authToken = authToken.trim()
-                                            settings.isVerified = true
-
-                                            // Fetch agent list via WebSocket
-                                            scope.launch {
-                                                isFetchingAgents = true
-                                                try {
-                                                    val baseUrl = settings.getBaseUrl()
-                                                    val parsedUrl = java.net.URL(baseUrl)
-                                                    val host = parsedUrl.host
-                                                    val useTls = parsedUrl.protocol == "https"
-                                                    val port = if (useTls) {
-                                                        if (parsedUrl.port > 0) parsedUrl.port else 443
-                                                    } else {
-                                                        if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
-                                                    }
-                                                    val token = authToken.takeIf { t -> t.isNotBlank() }
-
-                                                    if (!gatewayClient.isConnected()) {
-                                                        gatewayClient.connect(host, port, token, useTls = useTls)
-                                                        // Wait for connection
-                                                        for (i in 1..20) {
-                                                            delay(250)
-                                                            if (gatewayClient.isConnected()) break
-                                                        }
-                                                    }
-
-                                                    if (gatewayClient.isConnected()) {
-                                                        Log.e("SettingsActivity", "Connection successful, fetching agent list...")
-                                                        try {
-                                                            val agentResult = gatewayClient.getAgentList()
-                                                            Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
-                                                        } catch (e: Exception) {
-                                                            Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                            // Show toast for this error specifically since it's part of the test
-                                                            Toast.makeText(context, context.getString(R.string.agents_fetch_failed), Toast.LENGTH_LONG).show()
-                                                        }
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                } finally {
-                                                    isFetchingAgents = false
-                                                }
+                            // Test Connection Button
+                            Button(
+                                onClick = {
+                                    if (unifiedUrl.isBlank()) return@Button
+                                    scope.launch {
+                                        try {
+                                            isTesting = true
+                                            testResult = null
+                                            // Compute chat completions URL for testing
+                                            val testUrl = unifiedUrl.trimEnd('/').let { url ->
+                                                if (url.contains("/v1/")) url else "$url/v1/chat/completions"
                                             }
-                                        },
-                                        onFailure = {
-                                            testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
+                                            val result = apiClient.testConnection(testUrl, unifiedToken.trim())
+                                            result.fold(
+                                                onSuccess = {
+                                                    testResult = TestResult(success = true, message = context.getString(R.string.connected))
+                                                    settings.webhookUrl = unifiedUrl.trim()
+                                                    settings.authToken = unifiedToken.trim()
+                                                    settings.isVerified = true
+
+                                                    // Fetch agent list via WebSocket
+                                                    scope.launch {
+                                                        isFetchingAgents = true
+                                                        try {
+                                                            val baseUrl = settings.getBaseUrl()
+                                                            val parsedUrl = java.net.URL(baseUrl)
+                                                            val host = parsedUrl.host
+                                                            val useTls = parsedUrl.protocol == "https"
+                                                            val port = if (useTls) {
+                                                                if (parsedUrl.port > 0) parsedUrl.port else 443
+                                                            } else {
+                                                                if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
+                                                            }
+                                                            val token = authToken.takeIf { t -> t.isNotBlank() }
+
+                                                            if (!gatewayClient.isConnected()) {
+                                                                gatewayClient.connect(host, port, token, useTls = useTls)
+                                                                // Wait for connection
+                                                                for (i in 1..20) {
+                                                                    delay(250)
+                                                                    if (gatewayClient.isConnected()) break
+                                                                }
+                                                            }
+
+                                                            if (gatewayClient.isConnected()) {
+                                                                Log.e("SettingsActivity", "Connection successful, fetching agent list...")
+                                                                try {
+                                                                    val agentResult = gatewayClient.getAgentList()
+                                                                    Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
+                                                                } catch (e: Exception) {
+                                                                    Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
+                                                                    // Show toast for this error specifically since it's part of the test
+                                                                    Toast.makeText(context, context.getString(R.string.agents_fetch_failed), Toast.LENGTH_LONG).show()
+                                                                }
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
+                                                        } finally {
+                                                            isFetchingAgents = false
+                                                        }
+                                                    }
+                                                },
+                                                onFailure = {
+                                                    testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
+                                                }
+                                            )
+                                        } catch (e: Exception) {
+                                            testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
+                                        } finally {
+                                            isTesting = false
                                         }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = when {
+                                        testResult?.success == true -> Color(0xFF4CAF50)
+                                        testResult?.success == false -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                ),
+                                enabled = unifiedUrl.isNotBlank() && !isTesting
+                            ) {
+                                if (isTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.dp
                                     )
-                                } catch (e: Exception) {
-                                    testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
-                                } finally {
-                                    isTesting = false
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.testing))
+                                } else {
+                                    Icon(
+                                        when {
+                                            testResult?.success == true -> Icons.Default.Check
+                                            testResult?.success == false -> Icons.Default.Error
+                                            else -> Icons.Default.NetworkCheck
+                                        },
+                                        contentDescription = null
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(testResult?.message ?: stringResource(R.string.test_connection_button))
                                 }
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = when {
-                                testResult?.success == true -> Color(0xFF4CAF50)
-                                testResult?.success == false -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.primary
-                            }
-                        ),
-                        enabled = webhookUrl.isNotBlank() && !isTesting
-                    ) {
-                        if (isTesting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
+                        }
+                    } // end Column
+                } // end Card
+            } // end CollapsibleSection for Unified Connection
+
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === CHAT SECTION ===
+            CollapsibleSection(title = "Chat", initiallyExpanded = true) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("チャット送受信方式", style = MaterialTheme.typography.labelLarge)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Gateway Chat: Gatewayを介してチャット (会話履歴・セッション管理込み)\nHTTP Chat: Webhook URL経由で直接AIへリクエスト",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = useNodeChat,
+                                onClick = { useNodeChat = true },
+                                label = { Text("Gateway Chat") },
+                                modifier = Modifier.weight(1f)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.testing))
-                        } else {
-                            Icon(
-                                when {
-                                    testResult?.success == true -> Icons.Default.Check
-                                    testResult?.success == false -> Icons.Default.Error
-                                    else -> Icons.Default.NetworkCheck
-                                },
-                                contentDescription = null
+                            FilterChip(
+                                selected = !useNodeChat,
+                                onClick = { useNodeChat = false },
+                                label = { Text("HTTP Chat") },
+                                modifier = Modifier.weight(1f)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(testResult?.message ?: stringResource(R.string.test_connection_button))
                         }
                     }
                 }
             }
-            } // end CollapsibleSection for Legacy Connection
-
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -1028,203 +1033,195 @@ fun SettingsScreen(
             // === WAKE WORD SECTION ===
             CollapsibleSection(title = stringResource(R.string.wake_word)) {
 
-            // === Node / Gateway Wake Word ===
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.wake_word_node_title),
-                        style = MaterialTheme.typography.titleSmall
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.wake_word_node_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Wake Word Engine",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY,
+                                    onClick = { wakeWordEngine = SettingsRepository.WAKE_WORD_ENGINE_GATEWAY }
+                                )
+                                Text("Gateway (Server)", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_CLASSIC,
+                                    onClick = { wakeWordEngine = SettingsRepository.WAKE_WORD_ENGINE_CLASSIC }
+                                )
+                                Text("Classic (Local)", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
 
-                    // On/Off Switch
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                            Text(
+                                text = stringResource(R.string.wake_word_node_title),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Gateway handles wake word detection. Configure its listening mode here.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Action status text
                             Text(
                                 text = if (voiceWakeMode == VoiceWakeMode.Off) stringResource(R.string.capability_off) else voiceWakeStatusText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (voiceWakeMode == VoiceWakeMode.Off) Color.Gray else MaterialTheme.colorScheme.primary
                             )
-                        }
-                        Switch(
-                            checked = voiceWakeMode != VoiceWakeMode.Off,
-                            onCheckedChange = { on ->
-                                if (on) runtime.setVoiceWakeMode(VoiceWakeMode.Foreground)
-                                else runtime.setVoiceWakeMode(VoiceWakeMode.Off)
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = voiceWakeMode == VoiceWakeMode.Foreground,
+                                    onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Foreground) },
+                                    label = { Text(stringResource(R.string.wake_word_node_foreground), fontSize = 12.sp) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                FilterChip(
+                                    selected = voiceWakeMode == VoiceWakeMode.Always,
+                                    onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Always) },
+                                    label = { Text(stringResource(R.string.wake_word_node_always), fontSize = 12.sp) },
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
-                        )
-                    }
-
-                    // Foreground / Always selector (visible when enabled)
-                    if (voiceWakeMode != VoiceWakeMode.Off) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Foreground Only
-                            FilterChip(
-                                selected = voiceWakeMode == VoiceWakeMode.Foreground,
-                                onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Foreground) },
-                                label = { Text(stringResource(R.string.wake_word_node_foreground), fontSize = 12.sp) },
-                                modifier = Modifier.weight(1f)
+                            Text(
+                                text = if (voiceWakeMode == VoiceWakeMode.Always)
+                                    stringResource(R.string.wake_word_node_always_desc)
+                                else
+                                    stringResource(R.string.wake_word_node_foreground_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
                             )
-                            // Always
-                            FilterChip(
-                                selected = voiceWakeMode == VoiceWakeMode.Always,
-                                onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Always) },
-                                label = { Text(stringResource(R.string.wake_word_node_always), fontSize = 12.sp) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        Text(
-                            text = if (voiceWakeMode == VoiceWakeMode.Always)
-                                stringResource(R.string.wake_word_node_always_desc)
-                            else
-                                stringResource(R.string.wake_word_node_foreground_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
-                        )
-                    }
-                }
-            }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // === Classic Wake Word (Voice Overlay / Vosk) ===
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.wake_word_classic_title),
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    ExposedDropdownMenuBox(
-                        expanded = showWakeWordMenu,
-                        onExpandedChange = { showWakeWordMenu = it }
-                    ) {
-                        OutlinedTextField(
-                            value = wakeWordOptions.find { it.first == wakeWordPreset }?.second ?: stringResource(R.string.wake_word_openclaw),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.activation_phrase)) },
-                            leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showWakeWordMenu) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
-                        )
-                        
-                        ExposedDropdownMenu(
-                            expanded = showWakeWordMenu,
-                            onDismissRequest = { showWakeWordMenu = false }
-                        ) {
-                            wakeWordOptions.forEach { (value, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
+                            // Wake Word Sync from Server (only when connected)
+                            if (nodeConnected) {
+                                HorizontalDivider(thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
+                                var syncInProgress by remember { mutableStateOf(false) }
+                                var syncMessage by remember { mutableStateOf<String?>(null) }
+                                OutlinedButton(
+                                    modifier = Modifier.fillMaxWidth(),
                                     onClick = {
-                                        wakeWordPreset = value
-                                        showWakeWordMenu = false
-                                    },
-                                    leadingIcon = {
-                                        if (wakeWordPreset == value) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        syncInProgress = true
+                                        scope.launch {
+                                            try {
+                                                runtime.refreshWakeWordsFromGateway()
+                                                syncMessage = context.getString(R.string.wake_word_sync_success)
+                                            } catch (e: Exception) {
+                                                syncMessage = context.getString(R.string.wake_word_sync_failed)
+                                            } finally {
+                                                syncInProgress = false
+                                            }
                                         }
+                                    },
+                                    enabled = !syncInProgress
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(stringResource(R.string.wake_word_sync_from_server))
+                                }
+                                if (syncMessage != null) {
+                                    Text(
+                                        text = syncMessage!!,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            Text(
+                                text = stringResource(R.string.wake_word_classic_title),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ExposedDropdownMenuBox(
+                                expanded = showWakeWordMenu,
+                                onExpandedChange = { showWakeWordMenu = it }
+                            ) {
+                                OutlinedTextField(
+                                    value = wakeWordOptions.find { it.first == wakeWordPreset }?.second ?: stringResource(R.string.wake_word_openclaw),
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text(stringResource(R.string.activation_phrase)) },
+                                    leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showWakeWordMenu) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                
+                                ExposedDropdownMenu(
+                                    expanded = showWakeWordMenu,
+                                    onDismissRequest = { showWakeWordMenu = false }
+                                ) {
+                                    wakeWordOptions.forEach { (value, label) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                wakeWordPreset = value
+                                                showWakeWordMenu = false
+                                            },
+                                            leadingIcon = {
+                                                if (wakeWordPreset == value) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            if (wakeWordPreset == SettingsRepository.WAKE_WORD_CUSTOM) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedTextField(
+                                    value = customWakeWord,
+                                    onValueChange = { customWakeWord = it.lowercase() },
+                                    label = { Text(stringResource(R.string.custom_wake_word)) },
+                                    placeholder = { Text(stringResource(R.string.custom_wake_word_hint)) },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    supportingText = {
+                                        Text(stringResource(R.string.custom_wake_word_help), color = Color.Gray, fontSize = 12.sp)
                                     }
                                 )
                             }
                         }
-                    }
-                    
-                    if (wakeWordPreset == SettingsRepository.WAKE_WORD_CUSTOM) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = customWakeWord,
-                            onValueChange = { customWakeWord = it.lowercase() },
-                            label = { Text(stringResource(R.string.custom_wake_word)) },
-                            placeholder = { Text(stringResource(R.string.custom_wake_word_hint)) },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
+
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            supportingText = {
-                                Text(stringResource(R.string.custom_wake_word_help), color = Color.Gray, fontSize = 12.sp)
-                            }
-                        )
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                        Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
-                    }
-
-                    // Wake Word Sync from Server (only when connected)
-                    if (nodeConnected) {
-                        HorizontalDivider(thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
-                        var syncInProgress by remember { mutableStateOf(false) }
-                        var syncMessage by remember { mutableStateOf<String?>(null) }
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                syncInProgress = true
-                                scope.launch {
-                                    try {
-                                        runtime.refreshWakeWordsFromGateway()
-                                        syncMessage = context.getString(R.string.wake_word_sync_success)
-                                    } catch (e: Exception) {
-                                        syncMessage = context.getString(R.string.wake_word_sync_failed)
-                                    } finally {
-                                        syncInProgress = false
-                                    }
-                                }
-                            },
-                            enabled = !syncInProgress
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(Icons.Default.CloudDownload, null, Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.wake_word_sync_from_server))
-                        }
-                        if (syncMessage != null) {
-                            Text(
-                                text = syncMessage!!,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
                         }
                     }
                 }
             }
-
-            } // end CollapsibleSection for Wake Word
 
             Spacer(modifier = Modifier.height(24.dp))
 

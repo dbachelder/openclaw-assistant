@@ -220,7 +220,7 @@
     <string name="connect">接続</string>
     <string name="gateway_foreground_service">フォアグラウンドサービス</string>
     <string name="gateway_foreground_desc">バックグラウンド実行を維持</string>
-    <string name="gateway_use_node_chat">Node Chatを使用</string>
+    <string name="gateway_use_node_chat">Gateway Chatを使用</string>
     <string name="gateway_use_node_chat_desc">Gateway経由でチャットを行う</string>
 
     <!-- Legacy Settings -->

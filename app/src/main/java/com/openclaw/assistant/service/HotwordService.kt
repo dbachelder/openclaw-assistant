@@ -568,11 +568,19 @@ class HotwordService : Service(), VoskRecognitionListener {
 
             delay(300) // Wait for resource release
 
-            val intent = Intent(this@HotwordService, OpenClawAssistantService::class.java).apply {
-                action = OpenClawAssistantService.ACTION_SHOW_ASSISTANT
+            if (isAssistantActive()) {
+                val intent = Intent(this@HotwordService, OpenClawAssistantService::class.java).apply {
+                    action = OpenClawAssistantService.ACTION_SHOW_ASSISTANT
+                }
+                startService(intent)
+                Log.e(TAG, "startService ACTION_SHOW_ASSISTANT called")
+            } else {
+                Log.e(TAG, "Not default assistant. Launching MainActivity as fallback.")
+                val intent = Intent(this@HotwordService, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                startActivity(intent)
             }
-            startService(intent)
-            Log.e(TAG, "startService ACTION_SHOW_ASSISTANT called")
         }
     }
 
@@ -603,5 +611,11 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun cancelWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = null
+    }
+
+    private fun isAssistantActive(): Boolean {
+        return try {
+            android.provider.Settings.Secure.getString(contentResolver, "assistant")?.contains(packageName) == true
+        } catch (e: Exception) { false }
     }
 }

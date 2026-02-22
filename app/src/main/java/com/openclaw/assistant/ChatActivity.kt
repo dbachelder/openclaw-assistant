@@ -27,10 +27,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SmartToy
@@ -64,7 +61,6 @@ import com.openclaw.assistant.ui.chat.ChatViewModel
 import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.material3.TextButton
-import kotlinx.coroutines.launch
 import java.util.Locale
 
 import com.openclaw.assistant.data.SettingsRepository
@@ -72,6 +68,10 @@ import com.openclaw.assistant.data.SettingsRepository
 private const val TAG = "ChatActivity"
 
 class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+
+    companion object {
+        const val EXTRA_SESSION_ID = "EXTRA_SESSION_ID"
+    }
 
     private val viewModel: ChatViewModel by viewModels()
     private var tts: TextToSpeech? = null
@@ -91,6 +91,11 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsRepository.getInstance(this)
+
+        // Select specific session if provided via Intent (must be before setContent)
+        intent.getStringExtra(EXTRA_SESSION_ID)?.let { sessionId ->
+            viewModel.selectSessionOnStart(sessionId)
+        }
 
         // Initialize TTS with Activity context (important for MIUI!)
         // Try Google TTS first for better compatibility on Chinese ROMs
@@ -131,9 +136,6 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         }
                     },
                     onBack = { finish() },
-                    onSelectSession = { viewModel.selectSession(it) },
-                    onCreateSession = { viewModel.createNewSession() },
-                    onDeleteSession = { viewModel.deleteSession(it) },
                     onAgentSelected = { viewModel.setAgent(it) }
                 )
             }
@@ -226,27 +228,19 @@ fun ChatScreen(
     onStopSpeaking: () -> Unit,
     onInterruptAndListen: () -> Unit,
     onBack: () -> Unit,
-    onSelectSession: (String) -> Unit,
-    onCreateSession: () -> Unit,
-    onDeleteSession: (String) -> Unit,
     onAgentSelected: (String?) -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
 
     // Group messages by date
     val groupedItems = remember(uiState.messages) {
         val items = mutableListOf<ChatListItem>()
         val locale = Locale.getDefault()
-        // Use system's best format skeleton for "Month Day DayOfWeek"
         val skeleton = android.text.format.DateFormat.getBestDateTimePattern(locale, "MMMdEEE")
         val dateFormat = java.text.SimpleDateFormat(skeleton, locale)
-        
         var lastDate = ""
-
         uiState.messages.forEach { message ->
             val date = dateFormat.format(java.util.Date(message.timestamp))
             if (date != lastDate) {
@@ -258,230 +252,140 @@ fun ChatScreen(
         items
     }
 
-    // Scroll to bottom when new messages arrive
+    // First scroll after session load is instant (no visible scroll-from-top animation).
+    // Subsequent scrolls (new messages) are animated.
+    var isInitialScroll by remember(currentSessionId) { mutableStateOf(true) }
     LaunchedEffect(groupedItems.size) {
         if (groupedItems.isNotEmpty()) {
-            listState.animateScrollToItem(groupedItems.size - 1)
+            if (isInitialScroll) {
+                listState.scrollToItem(groupedItems.size - 1)
+                isInitialScroll = false
+            } else {
+                listState.animateScrollToItem(groupedItems.size - 1)
+            }
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState, // ... (rest of drawer content remains same, omitted for brevity if no changes needed there but I need to replace the whole function if using replace_file_content)
-        drawerContent = {
-            ModalDrawerSheet {
-                Spacer(Modifier.height(12.dp))
-                // PaddingValues(horizontal = 16.dp) 
-                Text(
-                    text = stringResource(R.string.conversations_title),
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.titleMedium
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let { error ->
+            snackbarHostState.showSnackbar(
+                message = error,
+                duration = SnackbarDuration.Short
+            )
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    val sessionTitle = allSessions.find { it.id == currentSessionId }?.title
+                        ?: stringResource(R.string.new_chat)
+                    Column {
+                        Text(
+                            sessionTitle,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        AgentSelector(
+                            agents = uiState.availableAgents,
+                            selectedAgentId = uiState.selectedAgentId,
+                            defaultAgentId = uiState.defaultAgentId,
+                            onAgentSelected = onAgentSelected
+                        )
+                        if (uiState.isNodeChatMode) {
+                            Text(
+                                text = "Node backend",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.primary,
+                    navigationIconContentColor = MaterialTheme.colorScheme.primary,
+                    actionIconContentColor = MaterialTheme.colorScheme.primary
                 )
-                if (uiState.isNodeChatMode) {
+            )
+        },
+        bottomBar = {
+            Column {
+                if (uiState.partialText.isNotBlank()) {
                     Text(
-                        text = "Gateway session mode",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        style = MaterialTheme.typography.bodySmall,
+                        text = uiState.partialText,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+                            .padding(12.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                HorizontalDivider()
-                
-                NavigationDrawerItem(
-                    label = { Text(stringResource(R.string.new_chat)) },
-                    selected = false,
-                    onClick = {
-                        onCreateSession()
-                        scope.launch { drawerState.close() }
+
+                ChatInputArea(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    onSend = {
+                        onSendMessage(inputText)
+                        inputText = ""
+                        keyboardController?.hide()
                     },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                    icon = { Icon(Icons.Default.Add, null) }
-                )
-                
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                LazyColumn {
-                    items(allSessions) { session ->
-                        val isSelected = session.id == currentSessionId
-                        NavigationDrawerItem(
-                            label = { 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = session.title,
-                                        maxLines = 1,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (!uiState.isNodeChatMode) {
-                                        IconButton(
-                                            onClick = { onDeleteSession(session.id) },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = stringResource(R.string.delete),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            selected = isSelected,
-                            onClick = {
-                                onSelectSession(session.id)
-                                scope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                        )
+                    isListening = uiState.isListening,
+                    isSpeaking = uiState.isSpeaking,
+                    onMicClick = {
+                        if (uiState.isSpeaking) {
+                            onInterruptAndListen()
+                        } else if (uiState.isListening) {
+                            onStopListening()
+                        } else {
+                            onStartListening()
+                        }
                     }
-                }
-            }
-        }
-    ) {
-        val snackbarHostState = remember { SnackbarHostState() }
-
-        // Show error as snackbar that auto-dismisses
-        LaunchedEffect(uiState.error) {
-            uiState.error?.let { error ->
-                snackbarHostState.showSnackbar(
-                    message = error,
-                    duration = SnackbarDuration.Short
                 )
             }
         }
-
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            topBar = {
-                TopAppBar(
-                    title = {
-                        val sessionTitle = allSessions.find { it.id == currentSessionId }?.title
-                            ?: stringResource(R.string.new_chat)
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    sessionTitle,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                            }
-                            AgentSelector(
-                                agents = uiState.availableAgents,
-                                selectedAgentId = uiState.selectedAgentId,
-                                defaultAgentId = uiState.defaultAgentId,
-                                onAgentSelected = onAgentSelected
-                            )
-                            if (uiState.isNodeChatMode) {
-                                Text(
-                                    text = "Node backend",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu))
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        titleContentColor = MaterialTheme.colorScheme.primary,
-                        navigationIconContentColor = MaterialTheme.colorScheme.primary,
-                        actionIconContentColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-            },
-            bottomBar = {
-                Column {
-                     if (uiState.partialText.isNotBlank()) {
-                         Text(
-                             text = uiState.partialText,
-                             modifier = Modifier
-                                 .fillMaxWidth()
-                                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                                 .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-                                 .padding(12.dp),
-                             color = MaterialTheme.colorScheme.onSurfaceVariant
-                         )
-                     }
-                    
-                    ChatInputArea(
-                        value = inputText,
-                        onValueChange = { inputText = it },
-                        onSend = {
-                            onSendMessage(inputText)
-                            inputText = ""
-                            keyboardController?.hide()
-                        },
-                        isListening = uiState.isListening,
-                        isSpeaking = uiState.isSpeaking,
-                        onMicClick = {
-                            if (uiState.isSpeaking) {
-                                onInterruptAndListen()
-                            } else if (uiState.isListening) {
-                                onStopListening()
-                            } else {
-                                onStartListening()
-                            }
-                        }
-                    )
+    ) { paddingValues ->
+        Column(modifier = Modifier.padding(paddingValues)) {
+            if (uiState.isPairingRequired && uiState.deviceId != null) {
+                Box(modifier = Modifier.padding(16.dp)) {
+                    PairingRequiredCard(deviceId = uiState.deviceId)
                 }
             }
-        ) { paddingValues ->
-            Column(modifier = Modifier.padding(paddingValues)) {
-                // Pairing Guidance
-                if (uiState.isPairingRequired && uiState.deviceId != null) {
-                    Box(modifier = Modifier.padding(16.dp)) {
-                        PairingRequiredCard(deviceId = uiState.deviceId)
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
+            ) {
+                items(groupedItems) { item ->
+                    when (item) {
+                        is ChatListItem.DateSeparator -> DateHeader(item.dateText)
+                        is ChatListItem.MessageItem -> MessageBubble(message = item.message)
                     }
                 }
-                // Error now shown as Snackbar via snackbarHostState
 
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
-                ) {
-                     items(groupedItems) { item ->
-                        when (item) {
-                            is ChatListItem.DateSeparator -> {
-                                DateHeader(item.dateText)
-                            }
-                            is ChatListItem.MessageItem -> {
-                                MessageBubble(message = item.message)
-                            }
-                        }
-                    }
-                    
-                    if (uiState.isThinking) {
-                        item {
-                            ThinkingIndicator()
-                        }
-                    }
-                    if (uiState.isSpeaking) {
-                        item {
-                            SpeakingIndicator(onStop = onStopSpeaking)
-                        }
-                    }
-                    if (uiState.pendingToolCalls.isNotEmpty()) {
-                        item {
-                            PendingToolsIndicator(uiState.pendingToolCalls)
-                        }
-                    }
+                if (uiState.isThinking) {
+                    item { ThinkingIndicator() }
+                }
+                if (uiState.isSpeaking) {
+                    item { SpeakingIndicator(onStop = onStopSpeaking) }
+                }
+                if (uiState.pendingToolCalls.isNotEmpty()) {
+                    item { PendingToolsIndicator(uiState.pendingToolCalls) }
                 }
             }
         }

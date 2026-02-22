@@ -165,6 +165,14 @@
     <string name="menu">Menu</string>
     <string name="back">Back</string>
 
+    <!-- Session List -->
+    <string name="no_sessions">No conversations yet. Tap + to start a new one.</string>
+    <string name="session_name_label">Name</string>
+    <string name="session_name_hint">e.g. Work, Travel, Study</string>
+    <string name="create">Create</string>
+    <string name="delete_session_title">Delete conversation?</string>
+    <string name="delete_session_message">"%s" will be permanently deleted.</string>
+
     <!-- Operator Offline Warning -->
     <string name="operator_offline_title">Operator Offline / Permission Needed</string>
     <string name="operator_offline_message">Your device is connected, but the AI lacks permission to operate it.\n\nPlease run the following command on your server to grant operator access:</string>
@@ -252,7 +260,7 @@
     <string name="connect">Connect</string>
     <string name="gateway_foreground_service">Foreground Service</string>
     <string name="gateway_foreground_desc">Keep running in background</string>
-    <string name="gateway_use_node_chat">Use Node Chat</string>
+    <string name="gateway_use_node_chat">Use Gateway Chat</string>
     <string name="gateway_use_node_chat_desc">Route chat via gateway</string>
 
     <!-- Legacy Settings -->

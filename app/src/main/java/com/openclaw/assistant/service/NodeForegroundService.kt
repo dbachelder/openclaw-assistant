@@ -34,7 +34,7 @@ class NodeForegroundService : Service() {
     super.onCreate()
     ensureChannel()
     val initial = buildNotification(title = "OpenClaw Node", text = "Starting…")
-    startForegroundWithTypes(notification = initial, requiresMic = false, requiresMediaProjection = false)
+    startForegroundWithTypes(notification = initial, requiresMic = false)
 
     val runtime = (application as OpenClawApplication).nodeRuntime
     notificationJob =
@@ -45,16 +45,14 @@ class NodeForegroundService : Service() {
           runtime.isConnected,
           runtime.voiceWakeMode,
           runtime.voiceWakeIsListening,
-          runtime.screenRecordActive,
         ) { args ->
           val status = args[0] as String
           val server = args[1] as? String
           val connected = args[2] as Boolean
           val voiceMode = args[3] as VoiceWakeMode
           val voiceListening = args[4] as Boolean
-          val screenRecording = args[5] as Boolean
-          Sextet(status, server, connected, voiceMode, voiceListening, screenRecording)
-        }.collect { (status, server, connected, voiceMode, voiceListening, screenRecording) ->
+          Quint(status, server, connected, voiceMode, voiceListening)
+        }.collect { (status, server, connected, voiceMode, voiceListening) ->
           val title = if (connected) "OpenClaw Node · Connected" else "OpenClaw Node"
           val voiceSuffix =
             if (voiceMode == VoiceWakeMode.Always) {
@@ -70,7 +68,6 @@ class NodeForegroundService : Service() {
           startForegroundWithTypes(
             notification = buildNotification(title = title, text = text),
             requiresMic = requiresMic,
-            requiresMediaProjection = screenRecording
           )
         }
       }
@@ -148,28 +145,23 @@ class NodeForegroundService : Service() {
     mgr.notify(NOTIFICATION_ID, notification)
   }
 
-  private fun startForegroundWithTypes(notification: Notification, requiresMic: Boolean, requiresMediaProjection: Boolean) {
-    if (didStartForeground && requiresMic == lastRequiresMic && requiresMediaProjection == lastRequiresMediaProjection) {
+  private fun startForegroundWithTypes(notification: Notification, requiresMic: Boolean) {
+    if (didStartForeground && requiresMic == lastRequiresMic) {
       updateNotification(notification)
       return
     }
 
     lastRequiresMic = requiresMic
-    lastRequiresMediaProjection = requiresMediaProjection
     
     var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
     if (requiresMic) {
         types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-    }
-    if (requiresMediaProjection) {
-        types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
     }
     
     startForeground(NOTIFICATION_ID, notification, types)
     didStartForeground = true
   }
 
-  private var lastRequiresMediaProjection = false
 
   private fun hasRecordAudioPermission(): Boolean {
     return (
@@ -197,4 +189,3 @@ class NodeForegroundService : Service() {
 }
 
 private data class Quint<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
-private data class Sextet<A, B, C, D, E, F>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E, val sixth: F)

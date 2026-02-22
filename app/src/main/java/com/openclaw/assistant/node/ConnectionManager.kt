@@ -158,10 +158,13 @@ class ConnectionManager(
   }
 
   fun buildNodeConnectOptions(): GatewayConnectOptions {
+    val caps = buildCapabilities()
+    val requestedScopes = caps.map { "node.$it" }
+
     return GatewayConnectOptions(
       role = "node",
-      scopes = emptyList(),
-      caps = buildCapabilities(),
+      scopes = requestedScopes,
+      caps = caps,
       commands = buildInvokeCommands(),
       permissions = emptyMap(),
       client = buildClientInfo(clientId = "openclaw-android", clientMode = "node"),

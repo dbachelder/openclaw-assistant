@@ -93,6 +93,12 @@
             android:exported="false"
             android:theme="@style/Theme.OpenClawAssistant" />
 
+        <!-- Session List Activity -->
+        <activity
+            android:name="com.openclaw.assistant.SessionListActivity"
+            android:exported="false"
+            android:theme="@style/Theme.OpenClawAssistant" />
+
         <!-- Chat Activity -->
         <activity
             android:name="com.openclaw.assistant.ChatActivity"

@@ -189,8 +189,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { it.copy(messages = messages) }
                 }
             }
-            // Initial session setup
+            // Initial session setup (skip if already set via Intent)
             viewModelScope.launch {
+                if (_currentSessionId.value != null) return@launch
                 val latest = chatRepository.getLatestSession()
                 if (latest != null) {
                     _currentSessionId.value = latest.id
@@ -288,6 +289,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             nodeRuntime.switchChatSession(sessionId)
             nodeRuntime.loadChat(sessionId)
         } else {
+            _currentSessionId.value = sessionId
+            settings.sessionId = sessionId
+        }
+    }
+
+    // Called from ChatActivity.onCreate when a specific session ID is provided via Intent.
+    // Must be called before the init coroutine runs (i.e., synchronously after ViewModel creation).
+    fun selectSessionOnStart(sessionId: String) {
+        if (!useNodeChat) {
             _currentSessionId.value = sessionId
             settings.sessionId = sessionId
         }

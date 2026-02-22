@@ -63,6 +63,11 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_CUSTOM_WAKE_WORD, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CUSTOM_WAKE_WORD, value).apply()
 
+    // Wake word engine selection (classic or gateway)
+    var wakeWordEngine: String
+        get() = prefs.getString(KEY_WAKE_WORD_ENGINE, WAKE_WORD_ENGINE_GATEWAY) ?: WAKE_WORD_ENGINE_GATEWAY
+        set(value) = prefs.edit().putString(KEY_WAKE_WORD_ENGINE, value).apply()
+
     // Get the actual wake words list for Vosk
     fun getWakeWords(): List<String> {
         return when (wakeWordPreset) {
@@ -151,6 +156,11 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_USE_NODE_CHAT, false)
         set(value) = prefs.edit().putBoolean(KEY_USE_NODE_CHAT, value).apply()
 
+    // Connection Type (Gateway vs Legacy)
+    var connectionType: String
+        get() = prefs.getString(KEY_CONNECTION_TYPE, CONNECTION_TYPE_GATEWAY) ?: CONNECTION_TYPE_GATEWAY
+        set(value) = prefs.edit().putString(KEY_CONNECTION_TYPE, value).apply()
+
     /**
      * Get the chat completions URL.
      * Supports both base URL (http://server) and full path (http://server/v1/chat/completions).
@@ -204,6 +214,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_GATEWAY_PORT = "gateway_port"
         private const val KEY_DEFAULT_AGENT_ID = "default_agent_id"
         private const val KEY_USE_NODE_CHAT = "use_node_chat"
+        private const val KEY_CONNECTION_TYPE = "connection_type"
         private const val KEY_SPEECH_SILENCE_TIMEOUT = "speech_silence_timeout"
         private const val KEY_THINKING_SOUND_ENABLED = "thinking_sound_enabled"
         private const val KEY_SPEECH_LANGUAGE = "speech_language"
@@ -214,6 +225,13 @@ class SettingsRepository(context: Context) {
         const val WAKE_WORD_JARVIS = "jarvis"
         const val WAKE_WORD_COMPUTER = "computer"
         const val WAKE_WORD_CUSTOM = "custom"
+        
+        private const val KEY_WAKE_WORD_ENGINE = "wake_word_engine"
+        const val WAKE_WORD_ENGINE_CLASSIC = "classic"
+        const val WAKE_WORD_ENGINE_GATEWAY = "gateway"
+        
+        const val CONNECTION_TYPE_GATEWAY = "gateway"
+        const val CONNECTION_TYPE_HTTP = "http"
         
         const val GOOGLE_TTS_PACKAGE = "com.google.android.tts"
 

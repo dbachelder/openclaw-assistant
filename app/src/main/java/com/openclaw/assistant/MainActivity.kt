@@ -99,9 +99,16 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         if (pendingHotwordStart) {
             pendingHotwordStart = false
             if (recordAudioGranted) {
-                settings.hotwordEnabled = true
-                HotwordService.start(this)
-                Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
+                if (settings.wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                    val runtime = (applicationContext as OpenClawApplication).nodeRuntime
+                    runtime.setVoiceWakeMode(VoiceWakeMode.Always)
+                    NodeForegroundService.start(this)
+                    Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
+                } else {
+                    settings.hotwordEnabled = true
+                    HotwordService.start(this)
+                    Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
+                }
             } else {
                 if (!ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
                     showPermissionSettingsDialog()
@@ -232,12 +239,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun toggleHotwordService(enabled: Boolean) {
+    fun toggleHotwordService(enabled: Boolean) {
+        val engine = settings.wakeWordEngine
+        val runtime = (applicationContext as OpenClawApplication).nodeRuntime
+
         if (enabled) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
-                settings.hotwordEnabled = true
-                HotwordService.start(this)
+                if (engine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                    runtime.setVoiceWakeMode(VoiceWakeMode.Always)
+                    NodeForegroundService.start(this)
+                } else {
+                    settings.hotwordEnabled = true
+                    HotwordService.start(this)
+                }
                 Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
             } else if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
                 // Show rationale dialog before requesting permission
@@ -248,8 +263,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
             }
         } else {
-            settings.hotwordEnabled = false
-            HotwordService.stop(this)
+            if (engine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                runtime.setVoiceWakeMode(VoiceWakeMode.Off)
+                if (!runtime.isForeground.value) {
+                    NodeForegroundService.stop(this)
+                }
+            } else {
+                settings.hotwordEnabled = false
+                HotwordService.stop(this)
+            }
             Toast.makeText(this, getString(R.string.hotword_stopped), Toast.LENGTH_SHORT).show()
         }
     }
@@ -327,8 +349,15 @@ fun MainScreen(
         (context.applicationContext as OpenClawApplication).nodeRuntime
     }
     var isConfigured by remember { mutableStateOf(settings.isConfigured()) }
+    var wakeWordEngine by remember { mutableStateOf(settings.wakeWordEngine) }
+    var classicHotwordEnabled by remember { mutableStateOf(settings.hotwordEnabled) }
     val voiceWakeMode by runtime.voiceWakeMode.collectAsState()
-    val hotwordEnabled = voiceWakeMode != VoiceWakeMode.Off
+    
+    val hotwordEnabled = if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+        voiceWakeMode != VoiceWakeMode.Off
+    } else {
+        classicHotwordEnabled
+    }
     var isAssistantSet by remember { mutableStateOf((context as? MainActivity)?.isAssistantActive() ?: false) }
     val nodeConnected by runtime.isConnected.collectAsState()
     val nodeStatusText by runtime.statusText.collectAsState()
@@ -384,6 +413,8 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isConfigured = settings.isConfigured()
+                wakeWordEngine = settings.wakeWordEngine
+                classicHotwordEnabled = settings.hotwordEnabled
                 isAssistantSet = (context as? MainActivity)?.isAssistantActive() ?: false
                 onRefreshDiagnostics()
             }
@@ -440,8 +471,6 @@ fun MainScreen(
             SystemStatusCard(
                 connected = nodeConnected,
                 statusText = nodeStatusText,
-                serverName = runtime.serverName.collectAsState().value,
-                remoteAddress = runtime.remoteAddress.collectAsState().value,
                 onConnect = { runtime.connectManual() },
                 onDisconnect = { runtime.disconnect() },
                 onOpenSettings = onOpenSettings
@@ -600,7 +629,8 @@ fun MainScreen(
                     showSwitch = true,
                     switchValue = hotwordEnabled,
                     onSwitchChange = { enabled ->
-                        runtime.setVoiceWakeMode(if (enabled) VoiceWakeMode.Always else VoiceWakeMode.Off)
+                        (context as? MainActivity)?.toggleHotwordService(enabled)
+                        classicHotwordEnabled = settings.hotwordEnabled
                     },
                     isActive = hotwordEnabled,
                     showInfoIcon = false
@@ -611,8 +641,8 @@ fun MainScreen(
             
             val chatContext = LocalContext.current
             Button(
-                onClick = { chatContext.startActivity(Intent(chatContext, ChatActivity::class.java)) }, 
-                modifier = Modifier.fillMaxWidth().height(56.dp), 
+                onClick = { chatContext.startActivity(Intent(chatContext, SessionListActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null)
@@ -709,8 +739,6 @@ fun OperatorOfflineCard(deviceId: String, displayName: String = "") {
 fun SystemStatusCard(
     connected: Boolean,
     statusText: String,
-    serverName: String?,
-    remoteAddress: String?,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit
@@ -753,7 +781,7 @@ fun SystemStatusCard(
             Spacer(modifier = Modifier.height(12.dp))
             
             Text(
-                text = if (connected && !serverName.isNullOrBlank()) serverName else stringResource(R.string.app_name),
+                text = stringResource(R.string.app_name),
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold
                 // color inherits from Card contentColor
@@ -765,16 +793,6 @@ fun SystemStatusCard(
                 color = contentColor.copy(alpha = 0.8f),
                 modifier = Modifier.padding(top = 4.dp)
             )
-            
-            if (connected && !remoteAddress.isNullOrBlank()) {
-                Text(
-                    text = remoteAddress,
-                    fontSize = 12.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    color = contentColor.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
