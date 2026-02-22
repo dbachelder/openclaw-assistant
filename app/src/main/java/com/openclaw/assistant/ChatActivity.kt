@@ -430,7 +430,7 @@ fun ChatScreen(
                 // Pairing Guidance
                 if (uiState.isPairingRequired && uiState.deviceId != null) {
                     Box(modifier = Modifier.padding(16.dp)) {
-                        PairingRequiredCard(deviceId = uiState.deviceId)
+                        PairingRequiredCard(deviceId = uiState.deviceId, displayName = uiState.displayName)
                     }
                 }
 

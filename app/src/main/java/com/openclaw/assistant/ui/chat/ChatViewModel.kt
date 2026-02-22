@@ -49,7 +49,8 @@ data class ChatUiState(
     val deviceId: String? = null,
     val pendingToolCalls: List<String> = emptyList(),
     val isNodeChatMode: Boolean = false,
-    val pendingGatewayTrust: com.openclaw.assistant.node.NodeRuntime.GatewayTrustPrompt? = null
+    val pendingGatewayTrust: com.openclaw.assistant.node.NodeRuntime.GatewayTrustPrompt? = null,
+    val displayName: String = ""
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -197,6 +198,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 nodeRuntime.pendingGatewayTrust.collect { prompt ->
                     _uiState.update { it.copy(pendingGatewayTrust = prompt) }
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.displayName.collect { name ->
+                    _uiState.update { it.copy(displayName = name) }
                 }
             }
             viewModelScope.launch {
