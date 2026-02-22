@@ -1,7 +1,6 @@
 package com.openclaw.assistant.voice
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,7 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.speech.RecognitionListener
-import android.speech.RecognitionService
+
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -179,12 +178,8 @@ class TalkModeManager(
 
       try {
         recognizer?.destroy()
-        val serviceComponent = findRecognitionService(context)
-        recognizer = if (serviceComponent != null) {
-          SpeechRecognizer.createSpeechRecognizer(context, serviceComponent)
-        } else {
-          SpeechRecognizer.createSpeechRecognizer(context)
-        }.also { it.setRecognitionListener(listener) }
+        recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+          .also { it.setRecognitionListener(listener) }
         startListeningInternal(markListening = true)
         startSilenceMonitor()
         Log.d(tag, "listening")
@@ -1102,12 +1097,8 @@ class TalkModeManager(
       if (!SpeechRecognizer.isRecognitionAvailable(context)) return@post
       try {
         if (recognizer == null) {
-          val serviceComponent = findRecognitionService(context)
-          recognizer = if (serviceComponent != null) {
-            SpeechRecognizer.createSpeechRecognizer(context, serviceComponent)
-          } else {
-            SpeechRecognizer.createSpeechRecognizer(context)
-          }.also { it.setRecognitionListener(listener) }
+          recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+            .also { it.setRecognitionListener(listener) }
         }
         recognizer?.cancel()
         startListeningInternal(markListening = false)
@@ -1247,21 +1238,6 @@ class TalkModeManager(
       override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-  private fun findRecognitionService(ctx: Context): ComponentName? {
-    val pm = ctx.packageManager
-    val services = pm.queryIntentServices(
-      Intent(RecognitionService.SERVICE_INTERFACE),
-      PackageManager.GET_META_DATA,
-    )
-    val ownPackage = ctx.packageName
-    val google = services.firstOrNull {
-      it.serviceInfo.packageName == "com.google.android.googlequicksearchbox"
-    }
-    if (google != null) return ComponentName(google.serviceInfo.packageName, google.serviceInfo.name)
-    val other = services.firstOrNull { it.serviceInfo.packageName != ownPackage }
-    if (other != null) return ComponentName(other.serviceInfo.packageName, other.serviceInfo.name)
-    return null
-  }
 }
 
 private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject

@@ -66,6 +66,7 @@ class SessionListActivity : ComponentActivity() {
                         viewModel.createSession(name) { sessionId ->
                             startActivity(Intent(this, ChatActivity::class.java).apply {
                                 putExtra(ChatActivity.EXTRA_SESSION_ID, sessionId)
+                                putExtra(ChatActivity.EXTRA_SESSION_TITLE, name)
                             })
                         }
                     },
@@ -75,6 +76,11 @@ class SessionListActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshSessions()
     }
 }
 

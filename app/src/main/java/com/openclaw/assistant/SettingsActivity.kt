@@ -323,25 +323,22 @@ fun SettingsScreen(
                         Text("Connection Type", style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            FilterChip(
-                                selected = connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY,
-                                onClick = { 
-                                    connectionType = SettingsRepository.CONNECTION_TYPE_GATEWAY
-                                },
-                                label = { Text("Gateway") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            FilterChip(
-                                selected = connectionType == SettingsRepository.CONNECTION_TYPE_HTTP,
-                                onClick = { 
-                                    connectionType = SettingsRepository.CONNECTION_TYPE_HTTP
-                                },
-                                label = { Text("HTTP") },
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY,
+                                    onClick = { connectionType = SettingsRepository.CONNECTION_TYPE_GATEWAY }
+                                )
+                                Text("Gateway", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = connectionType == SettingsRepository.CONNECTION_TYPE_HTTP,
+                                    onClick = { connectionType = SettingsRepository.CONNECTION_TYPE_HTTP }
+                                )
+                                Text("HTTP", style = MaterialTheme.typography.bodyMedium)
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
@@ -795,21 +792,22 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            FilterChip(
-                                selected = useNodeChat,
-                                onClick = { useNodeChat = true },
-                                label = { Text("Gateway Chat") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            FilterChip(
-                                selected = !useNodeChat,
-                                onClick = { useNodeChat = false },
-                                label = { Text("HTTP Chat") },
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = useNodeChat,
+                                    onClick = { useNodeChat = true }
+                                )
+                                Text("Gateway Chat", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                RadioButton(
+                                    selected = !useNodeChat,
+                                    onClick = { useNodeChat = false }
+                                )
+                                Text("HTTP Chat", style = MaterialTheme.typography.bodyMedium)
+                            }
                         }
                     }
                 }
@@ -1177,21 +1175,22 @@ fun SettingsScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                FilterChip(
-                                    selected = voiceWakeMode == VoiceWakeMode.Foreground,
-                                    onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Foreground) },
-                                    label = { Text(stringResource(R.string.wake_word_node_foreground), fontSize = 12.sp) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                FilterChip(
-                                    selected = voiceWakeMode == VoiceWakeMode.Always,
-                                    onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Always) },
-                                    label = { Text(stringResource(R.string.wake_word_node_always), fontSize = 12.sp) },
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    RadioButton(
+                                        selected = voiceWakeMode == VoiceWakeMode.Foreground,
+                                        onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Foreground) }
+                                    )
+                                    Text(stringResource(R.string.wake_word_node_foreground), style = MaterialTheme.typography.bodySmall)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    RadioButton(
+                                        selected = voiceWakeMode == VoiceWakeMode.Always,
+                                        onClick = { runtime.setVoiceWakeMode(VoiceWakeMode.Always) }
+                                    )
+                                    Text(stringResource(R.string.wake_word_node_always), style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                             Text(
                                 text = if (voiceWakeMode == VoiceWakeMode.Always)

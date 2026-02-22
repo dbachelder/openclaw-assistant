@@ -106,7 +106,7 @@ fun ChatMessageListCard(
       }
 
       val showScrollToBottom by remember {
-        derivedStateOf { listState.firstVisibleItemIndex > 2 }
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 }
       }
 
       androidx.compose.animation.AnimatedVisibility(

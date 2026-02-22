@@ -610,6 +610,12 @@ fun MainScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             val wakeWords by runtime.wakeWords.collectAsState()
+            val displayWakeWord = if (wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_GATEWAY) {
+                wakeWords.joinToString(", ").ifBlank { "openclaw" }
+            } else {
+                settings.getWakeWordDisplayName()
+            }
+
             Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CompactActionCard(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -624,8 +630,8 @@ fun MainScreen(
                 CompactActionCard(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     icon = if (hotwordEnabled) Icons.Default.Mic else Icons.Default.MicOff,
-                    title = stringResource(R.string.hotword_title, wakeWords.firstOrNull() ?: "openclaw"),
-                    description = if (hotwordEnabled) stringResource(R.string.hotword_listening) else stringResource(R.string.hotword_tap_to_enable),
+                    title = stringResource(R.string.wake_word),
+                    description = "$displayWakeWord (${if (hotwordEnabled) "ON" else "OFF"})",
                     showSwitch = true,
                     switchValue = hotwordEnabled,
                     onSwitchChange = { enabled ->

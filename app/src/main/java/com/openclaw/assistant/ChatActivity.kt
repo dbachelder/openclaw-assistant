@@ -12,6 +12,7 @@ import android.widget.Toast
 import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
@@ -61,9 +62,11 @@ import com.openclaw.assistant.ui.chat.ChatViewModel
 import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.material3.TextButton
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.service.HotwordService
 
 private const val TAG = "ChatActivity"
 
@@ -71,12 +74,14 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     companion object {
         const val EXTRA_SESSION_ID = "EXTRA_SESSION_ID"
+        const val EXTRA_SESSION_TITLE = "EXTRA_SESSION_TITLE"
     }
 
     private val viewModel: ChatViewModel by viewModels()
     private var tts: TextToSpeech? = null
     private var isRetry = false
     private lateinit var settings: SettingsRepository
+    private var hasResumedOnce = false
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -93,8 +98,9 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         settings = SettingsRepository.getInstance(this)
 
         // Select specific session if provided via Intent (must be before setContent)
+        val extraTitle = intent.getStringExtra(EXTRA_SESSION_TITLE)
         intent.getStringExtra(EXTRA_SESSION_ID)?.let { sessionId ->
-            viewModel.selectSessionOnStart(sessionId)
+            viewModel.selectSessionOnStart(sessionId, extraTitle)
         }
 
         // Initialize TTS with Activity context (important for MIUI!)
@@ -112,6 +118,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val uiState by viewModel.uiState.collectAsState()
                 val allSessions by viewModel.allSessions.collectAsState()
                 val currentSessionId by viewModel.currentSessionId.collectAsState()
+                val initialSessionTitle by viewModel.initialSessionTitle.collectAsState()
                 val prefillText = intent.getStringExtra("EXTRA_PREFILL_TEXT") ?: ""
                 
                 ChatScreen(
@@ -119,6 +126,7 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     uiState = uiState,
                     allSessions = allSessions,
                     currentSessionId = currentSessionId,
+                    initialSessionTitle = initialSessionTitle,
                     onSendMessage = { viewModel.sendMessage(it) },
                     onStartListening = {
                         Log.e(TAG, "onStartListening called, permission=${checkPermission()}")
@@ -176,6 +184,29 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Pause hotword detection while this activity holds the mic.
+        // setPackage is required to reach NodeForegroundService (RECEIVER_NOT_EXPORTED).
+        sendBroadcast(Intent(HotwordService.ACTION_PAUSE_HOTWORD).apply { setPackage(packageName) })
+        // Refresh chat history in NodeChat mode to show any responses that arrived
+        // while the screen was away (e.g., after returning from the session list).
+        // Skip on first resume (right after onCreate) since loadChat bootstrap is already running.
+        if (hasResumedOnce) {
+            viewModel.refreshChatIfNeeded()
+        }
+        hasResumedOnce = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Stop any ongoing speech recognition before releasing the mic
+        viewModel.stopListening()
+        // Resume hotword detection now that the mic will be released.
+        // setPackage is required to reach NodeForegroundService (RECEIVER_NOT_EXPORTED).
+        sendBroadcast(Intent(HotwordService.ACTION_RESUME_HOTWORD).apply { setPackage(packageName) })
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         tts?.stop()
@@ -222,6 +253,7 @@ fun ChatScreen(
     uiState: ChatUiState,
     allSessions: List<com.openclaw.assistant.data.local.entity.SessionEntity>,
     currentSessionId: String?,
+    initialSessionTitle: String? = null,
     onSendMessage: (String) -> Unit,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
@@ -249,21 +281,18 @@ fun ChatScreen(
             }
             items.add(ChatListItem.MessageItem(message))
         }
-        items
+        items.reversed()
     }
 
-    // First scroll after session load is instant (no visible scroll-from-top animation).
-    // Subsequent scrolls (new messages) are animated.
-    var isInitialScroll by remember(currentSessionId) { mutableStateOf(true) }
-    LaunchedEffect(groupedItems.size) {
-        if (groupedItems.isNotEmpty()) {
-            if (isInitialScroll) {
-                listState.scrollToItem(groupedItems.size - 1)
-                isInitialScroll = false
-            } else {
-                listState.animateScrollToItem(groupedItems.size - 1)
-            }
+    // Scroll to bottom effect (animate when size changes)
+    var previousItemCount by remember { mutableIntStateOf(groupedItems.size) }
+    LaunchedEffect(groupedItems.size, uiState.isThinking, uiState.isSpeaking, uiState.pendingToolCalls.size) {
+        if (groupedItems.size > previousItemCount + 1 || previousItemCount == 0) {
+            listState.scrollToItem(0)
+        } else {
+            listState.animateScrollToItem(0)
         }
+        previousItemCount = groupedItems.size
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -283,6 +312,7 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     val sessionTitle = allSessions.find { it.id == currentSessionId }?.title
+                        ?: initialSessionTitle
                         ?: stringResource(R.string.new_chat)
                     Column {
                         Text(
@@ -349,42 +379,71 @@ fun ChatScreen(
             }
         }
     ) { paddingValues ->
-        Column(modifier = Modifier.padding(paddingValues)) {
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             if (uiState.isPairingRequired && uiState.deviceId != null) {
                 Box(modifier = Modifier.padding(16.dp)) {
                     PairingRequiredCard(deviceId = uiState.deviceId)
                 }
             }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
-            ) {
-                items(groupedItems) { item ->
-                    when (item) {
-                        is ChatListItem.DateSeparator -> DateHeader(item.dateText)
-                        is ChatListItem.MessageItem -> MessageBubble(message = item.message)
+            Box(modifier = Modifier.weight(1f)) {
+                LazyColumn(
+                    state = listState,
+                    reverseLayout = true,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
+                ) {
+                    if (uiState.pendingToolCalls.isNotEmpty()) {
+                        item { PendingToolsIndicator(uiState.pendingToolCalls) }
+                    }
+                    if (uiState.isSpeaking) {
+                        item { SpeakingIndicator(onStop = onStopSpeaking) }
+                    }
+                    if (uiState.isThinking) {
+                        item { ThinkingIndicator() }
+                    }
+
+                    items(groupedItems) { item ->
+                        when (item) {
+                            is ChatListItem.DateSeparator -> DateHeader(item.dateText)
+                            is ChatListItem.MessageItem -> MessageBubble(message = item.message)
+                        }
+                    }
+                } // closes LazyColumn
+
+                // Scroll to bottom button
+                val showScrollToBottom by remember {
+                    derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showScrollToBottom,
+                    enter = androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 16.dp)
+                ) {
+                    val coroutineScope = rememberCoroutineScope()
+                    SmallFloatingActionButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                listState.animateScrollToItem(0)
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    ) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom")
                     }
                 }
-
-                if (uiState.isThinking) {
-                    item { ThinkingIndicator() }
-                }
-                if (uiState.isSpeaking) {
-                    item { SpeakingIndicator(onStop = onStopSpeaking) }
-                }
-                if (uiState.pendingToolCalls.isNotEmpty()) {
-                    item { PendingToolsIndicator(uiState.pendingToolCalls) }
-                }
-            }
-        }
-    }
-}
-
+            } // closes Box
+        } // closes Column
+    } // closes Scaffold
+} // closes ChatScreen
 @Composable
 fun DateHeader(dateText: String) {
     Box(

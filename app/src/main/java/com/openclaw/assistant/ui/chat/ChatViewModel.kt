@@ -79,6 +79,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Current Session
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
+
+    // Initial title passed via Intent (used before allSessions is loaded)
+    private val _initialSessionTitle = MutableStateFlow<String?>(null)
+    val initialSessionTitle: StateFlow<String?> = _initialSessionTitle.asStateFlow()
+
+    // Whether selectSessionOnStart() was called (session set via Intent before init completes)
+    private var sessionSelectedViaIntent = false
     
     // Sync current session with Settings if needed, or just let UI drive it?
     // Let's load the last one if available, or create new.
@@ -143,13 +150,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     previousCount = uiMessages.size
                 }
             }
+            // Use pendingRunCount as the authoritative source for isThinking
             viewModelScope.launch {
-                nodeRuntime.chatStreamingAssistantText.collect { streaming ->
-                    _uiState.update { state ->
-                        state.copy(
-                            isThinking = !streaming.isNullOrBlank() && !state.isSpeaking
-                        )
-                    }
+                nodeRuntime.pendingRunCount.collect { count ->
+                    val isThinking = count > 0
+                    if (!isThinking) stopThinkingSound()
+                    _uiState.update { it.copy(isThinking = isThinking) }
                 }
             }
             viewModelScope.launch {
@@ -173,8 +179,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             viewModelScope.launch {
-                val key = nodeRuntime.chatSessionKey.value
-                nodeRuntime.loadChat(key)
+                // If selectSessionOnStart was already called (from Intent), skip loadChat
+                // to avoid a second bootstrap() that would clear in-flight pendingRuns.
+                if (!sessionSelectedViaIntent) {
+                    val key = nodeRuntime.chatSessionKey.value
+                    nodeRuntime.loadChat(key)
+                }
                 nodeRuntime.refreshChatSessions()
             }
         } else {
@@ -296,9 +306,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // Called from ChatActivity.onCreate when a specific session ID is provided via Intent.
     // Must be called before the init coroutine runs (i.e., synchronously after ViewModel creation).
-    fun selectSessionOnStart(sessionId: String) {
+    fun selectSessionOnStart(sessionId: String, initialTitle: String? = null) {
         if (useNodeChat) {
-            nodeRuntime.switchChatSession(sessionId)
+            sessionSelectedViaIntent = true
+            _currentSessionId.value = sessionId
+            if (!initialTitle.isNullOrBlank()) {
+                _initialSessionTitle.value = initialTitle
+            }
+            nodeRuntime.loadChat(sessionId)
         } else {
             _currentSessionId.value = sessionId
             settings.sessionId = sessionId
@@ -346,6 +361,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         isTTSReady = true
     }
 
+    /**
+     * Called from ChatActivity.onResume() to refresh chat history in NodeChat mode.
+     * Only refreshes when not currently thinking (i.e., no in-flight request).
+     */
+    fun refreshChatIfNeeded() {
+        if (!useNodeChat) return
+        if (_uiState.value.isThinking) return
+        nodeRuntime.refreshChat()
+    }
+
     fun setAgent(agentId: String?) {
         _uiState.update { it.copy(selectedAgentId = agentId) }
     }
@@ -361,7 +386,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (text.isBlank()) return
 
         if (useNodeChat) {
-            _uiState.update { it.copy(isThinking = true, error = null) }
+            _uiState.update { it.copy(error = null) }
             if (lastInputWasVoice) {
                 toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
             }

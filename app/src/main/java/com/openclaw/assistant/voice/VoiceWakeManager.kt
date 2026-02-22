@@ -1,14 +1,11 @@
 package com.openclaw.assistant.voice
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
-import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +35,8 @@ class VoiceWakeManager(
   private var restartJob: Job? = null
   private var lastDispatched: String? = null
   private var stopRequested = false
+  private var consecutiveErrors = 0
+  private val maxConsecutiveErrors = 5
 
   fun setTriggerWords(words: List<String>) {
     triggerWords = words
@@ -47,6 +46,7 @@ class VoiceWakeManager(
     mainHandler.post {
       if (_isListening.value) return@post
       stopRequested = false
+      consecutiveErrors = 0
 
       if (!SpeechRecognizer.isRecognitionAvailable(context)) {
         _isListening.value = false
@@ -56,12 +56,8 @@ class VoiceWakeManager(
 
       try {
         recognizer?.destroy()
-        val serviceComponent = findRecognitionService(context)
-        recognizer = if (serviceComponent != null) {
-          SpeechRecognizer.createSpeechRecognizer(context, serviceComponent)
-        } else {
-          SpeechRecognizer.createSpeechRecognizer(context)
-        }.also { it.setRecognitionListener(listener) }
+        recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+          .also { it.setRecognitionListener(listener) }
         startListeningInternal()
       } catch (err: Throwable) {
         _isListening.value = false
@@ -91,6 +87,10 @@ class VoiceWakeManager(
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        // Suppress the audio beep that plays on recognition start/end.
+        // VoiceWakeManager restarts recognition continuously in the background,
+        // so without this the beep plays on every restart cycle.
+        putExtra("android.speech.extra.EXTRA_AUDIO_BEEP", false)
       }
 
     _statusText.value = "Listening"
@@ -150,6 +150,22 @@ class VoiceWakeManager(
           return
         }
 
+        // Soft errors (no speech) reset the error counter; hard errors accumulate
+        val isSoftError = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                          error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+        if (isSoftError) {
+          consecutiveErrors = 0
+        } else {
+          consecutiveErrors++
+        }
+
+        // Stop looping after too many consecutive hard errors (e.g. recognizer unavailable on this device)
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          _statusText.value = "Voice wake unavailable (error $error)"
+          consecutiveErrors = 0
+          return
+        }
+
         _statusText.value =
           when (error) {
             SpeechRecognizer.ERROR_AUDIO -> "Audio error"
@@ -162,7 +178,9 @@ class VoiceWakeManager(
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Listening"
             else -> "Speech error ($error)"
           }
-        scheduleRestart(delayMs = 600)
+        // Use longer delay for hard errors to avoid rapid beep loops
+        val delayMs = if (isSoftError) 600L else 2000L
+        scheduleRestart(delayMs = delayMs)
       }
 
       override fun onResults(results: Bundle?) {
@@ -179,19 +197,4 @@ class VoiceWakeManager(
       override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-  private fun findRecognitionService(ctx: Context): ComponentName? {
-    val pm = ctx.packageManager
-    val services = pm.queryIntentServices(
-      Intent(RecognitionService.SERVICE_INTERFACE),
-      PackageManager.GET_META_DATA,
-    )
-    val ownPackage = ctx.packageName
-    val google = services.firstOrNull {
-      it.serviceInfo.packageName == "com.google.android.googlequicksearchbox"
-    }
-    if (google != null) return ComponentName(google.serviceInfo.packageName, google.serviceInfo.name)
-    val other = services.firstOrNull { it.serviceInfo.packageName != ownPackage }
-    if (other != null) return ComponentName(other.serviceInfo.packageName, other.serviceInfo.name)
-    return null
-  }
 }

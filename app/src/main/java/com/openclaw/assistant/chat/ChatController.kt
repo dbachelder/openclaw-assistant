@@ -59,6 +59,8 @@ class ChatController(
   private val pendingRunTimeoutJobs = ConcurrentHashMap<String, Job>()
   private val pendingRunTimeoutMs = 120_000L
 
+  private var bootstrapJob: Job? = null
+
   private var lastHealthPollAtMs: Long? = null
 
   fun onDisconnected(message: String) {
@@ -74,8 +76,12 @@ class ChatController(
 
   fun load(sessionKey: String) {
     val key = sessionKey.trim().ifEmpty { "main" }
+    // If the key hasn't changed and bootstrap is still running, do nothing.
+    // This prevents a second call from clearing in-flight pendingRuns.
+    if (_sessionKey.value == key && bootstrapJob?.isActive == true) return
     _sessionKey.value = key
-    scope.launch { bootstrap(forceHealth = true) }
+    bootstrapJob?.cancel()
+    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
   }
 
   fun applyMainSessionKey(mainSessionKey: String) {
@@ -84,11 +90,13 @@ class ChatController(
     if (_sessionKey.value == trimmed) return
     if (_sessionKey.value != "main") return
     _sessionKey.value = trimmed
-    scope.launch { bootstrap(forceHealth = true) }
+    bootstrapJob?.cancel()
+    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
   }
 
   fun refresh() {
-    scope.launch { bootstrap(forceHealth = true) }
+    bootstrapJob?.cancel()
+    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
   }
 
   fun refreshSessions(limit: Int? = null) {
@@ -106,7 +114,8 @@ class ChatController(
     if (key.isEmpty()) return
     if (key == _sessionKey.value) return
     _sessionKey.value = key
-    scope.launch { bootstrap(forceHealth = true) }
+    bootstrapJob?.cancel()
+    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
   }
 
   fun sendMessage(
@@ -251,12 +260,12 @@ class ChatController(
 
   private suspend fun bootstrap(forceHealth: Boolean) {
     _errorText.value = null
-    _healthOk.value = false
     clearPendingRuns()
     pendingToolCallsById.clear()
     publishPendingToolCalls()
     _streamingAssistantText.value = null
     _sessionId.value = null
+    _messages.value = emptyList() // clear stale messages while loading
 
     val key = _sessionKey.value
     try {
@@ -270,9 +279,12 @@ class ChatController(
 
       val historyJson = session.request("chat.history", """{"sessionKey":"$key"}""")
       val history = parseHistory(historyJson, sessionKey = key)
-      _messages.value = history.messages
-      _sessionId.value = history.sessionId
-      history.thinkingLevel?.trim()?.takeIf { it.isNotEmpty() }?.let { _thinkingLevel.value = it }
+      // Only update if sessionKey hasn't changed while we were waiting
+      if (_sessionKey.value == key) {
+        _messages.value = history.messages
+        _sessionId.value = history.sessionId
+        history.thinkingLevel?.trim()?.takeIf { it.isNotEmpty() }?.let { _thinkingLevel.value = it }
+      }
 
       pollHealthIfNeeded(force = forceHealth)
       fetchSessions(limit = 50)
