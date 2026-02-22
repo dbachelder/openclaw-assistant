@@ -291,7 +291,8 @@
     <string name="canvas_debug_mode_desc">Show a connection status overlay on the canvas screen</string>
 
     <!-- Wake Word Sync -->
-    <string name="wake_word_sync_from_server">Sync from Server</string>
+    <string name="wake_word_sync_from_server">Get Wake Words from Gateway</string>
+    <string name="wake_word_sync_desc">Download wake words configured on the gateway server to this device.</string>
     <string name="wake_word_sync_success">Wake words synced</string>
     <string name="wake_word_sync_failed">Sync failed</string>
 
@@ -321,9 +322,14 @@
     <!-- Wake Word Mode (Settings) -->
     <string name="wake_word_node_title">Gateway Wake Word</string>
     <string name="wake_word_node_desc">Detects your wake word and sends a request to the AI gateway.</string>
+    <string name="wake_word_gateway_desc">This device listens for your wake word and sends a command to the gateway. Enter the words you want to say to activate the assistant.</string>
     <string name="wake_word_node_foreground">App Open</string>
     <string name="wake_word_node_foreground_desc">Listens only while OpenClaw is open.</string>
     <string name="wake_word_node_always">Always</string>
     <string name="wake_word_node_always_desc">Continues listening in the background (uses a persistent notification).</string>
-    <string name="wake_word_classic_title">Classic Mode (Voice Overlay)</string>
+    <string name="wake_word_classic_title">Vosk Mode (Voice Overlay)</string>
+    <string name="wake_word_engine_vosk">Vosk (Local)</string>
+    <string name="wake_words_label">Wake Words</string>
+    <string name="wake_words_placeholder">openclaw, claude</string>
+    <string name="wake_words_help">Comma-separated words that activate the assistant (e.g. "openclaw, claude")</string>
 </resources>

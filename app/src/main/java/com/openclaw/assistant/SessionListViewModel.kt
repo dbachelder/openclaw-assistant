@@ -52,9 +52,11 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
 
     fun createSession(name: String, onCreated: (String) -> Unit) {
         if (settingsRepository.useNodeChat) {
-            // Gateway auto-creates the session upon receiving the first message
-            val id = UUID.randomUUID().toString()
-            onCreated(id)
+            val id = "chat-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}"
+            viewModelScope.launch {
+                gatewayClient.patchSession(id, name.trim())
+                onCreated(id)
+            }
         } else {
             viewModelScope.launch {
                 val id = chatRepository.createSession(name.trim())

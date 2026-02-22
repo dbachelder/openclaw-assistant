@@ -186,7 +186,7 @@ class ChatController(
               )
             }
           }
-        val res = session.request("chat.send", params.toString())
+        val res = session.request("chat.send", params.toString(), timeoutMs = 35_000)
         val actualRunId = parseRunId(res) ?: runId
         if (actualRunId != runId) {
           clearPendingRun(runId)

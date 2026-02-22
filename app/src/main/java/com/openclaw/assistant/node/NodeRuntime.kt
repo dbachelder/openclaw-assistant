@@ -58,6 +58,7 @@ class NodeRuntime(context: Context) {
   private val json = Json { ignoreUnknownKeys = true }
 
   private val externalAudioCaptureActive = MutableStateFlow(false)
+  private val chatMicActive = MutableStateFlow(false)
 
   private val voiceWake: VoiceWakeManager by lazy {
     VoiceWakeManager(
@@ -399,10 +400,11 @@ class NodeRuntime(context: Context) {
         isForeground,
         externalAudioCaptureActive,
         wakeWords,
-      ) { mode, foreground, externalAudio, words ->
-        Quad(mode, foreground, externalAudio, words)
+        chatMicActive,
+      ) { mode, foreground, externalAudio, words, chatMic ->
+        Quint(mode, foreground, externalAudio, words, chatMic)
       }.distinctUntilChanged()
-        .collect { (mode, foreground, externalAudio, words) ->
+        .collect { (mode, foreground, externalAudio, words, chatMic) ->
           voiceWake.setTriggerWords(words)
 
           val shouldListen =
@@ -410,7 +412,7 @@ class NodeRuntime(context: Context) {
               VoiceWakeMode.Off -> false
               VoiceWakeMode.Foreground -> foreground
               VoiceWakeMode.Always -> true
-            } && !externalAudio
+            } && !externalAudio && !chatMic
 
           if (!shouldListen) {
             voiceWake.stop(statusText = if (mode == VoiceWakeMode.Off) "Off" else "Paused")
@@ -543,6 +545,14 @@ class NodeRuntime(context: Context) {
 
   fun resetWakeWordsDefaults() {
     setWakeWords(SecurePrefs.defaultWakeWords)
+  }
+
+  fun pauseVoiceWake() {
+    chatMicActive.value = true
+  }
+
+  fun resumeVoiceWake() {
+    chatMicActive.value = false
   }
 
   fun setVoiceWakeMode(mode: VoiceWakeMode) {

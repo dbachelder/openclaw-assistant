@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openclaw.assistant.api.OpenClawClient
+import com.openclaw.assistant.WakeWords
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.service.NodeForegroundService
 import com.openclaw.assistant.service.HotwordService
@@ -88,7 +89,7 @@ fun SettingsScreen(
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
     var useNodeChat by remember { mutableStateOf(settings.useNodeChat) }
 
-    var showAuthToken by remember { mutableStateOf(false) }
+
     var showWakeWordMenu by remember { mutableStateOf(false) }
     var showLanguageMenu by remember { mutableStateOf(false) }
     
@@ -125,29 +126,49 @@ fun SettingsScreen(
     val nodeForeground by runtime.isForeground.collectAsState()
     val voiceWakeMode by runtime.voiceWakeMode.collectAsState()
     val voiceWakeStatusText by runtime.voiceWakeStatusText.collectAsState()
+    val gatewayWakeWords by runtime.wakeWords.collectAsState()
+    var gatewayWakeWordsText by remember { mutableStateOf("") }
+    var gatewayWakeWordsHadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(gatewayWakeWords) {
+        if (!gatewayWakeWordsHadFocus) {
+            gatewayWakeWordsText = gatewayWakeWords.joinToString(", ")
+        }
+    }
+    val commitGatewayWakeWords = {
+        val parsed = WakeWords.parseIfChanged(gatewayWakeWordsText, gatewayWakeWords)
+        if (parsed != null) {
+            runtime.setWakeWords(parsed)
+        }
+    }
     val manualEnabledState by runtime.manualEnabled.collectAsState()
     val manualHostState by runtime.manualHost.collectAsState()
     val manualPortState by runtime.manualPort.collectAsState()
     val manualTlsState by runtime.manualTls.collectAsState()
     val gatewayTokenState by runtime.gatewayToken.collectAsState()
     
-    // Unified inputs
+    // Connection Type
     var connectionType by remember { mutableStateOf(settings.connectionType) }
-    var unifiedUrl by remember(connectionType, webhookUrl, manualHostState, manualPortState, manualTlsState) { 
-        mutableStateOf(
-            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                val proto = if (manualTlsState) "https://" else "http://"
-                val portStr = if (manualPortState > 0) ":$manualPortState" else ""
-                if (manualHostState.isNotBlank()) "$proto$manualHostState$portStr" else ""
-            } else {
-                webhookUrl
-            }
-        ) 
+    
+    // Gateway inputs
+    var gatewayHost by remember { mutableStateOf(manualHostState) }
+    var gatewayPort by remember { mutableStateOf(manualPortState.toString()) }
+    var gatewayTls by remember { mutableStateOf(manualTlsState) }
+    var gatewayToken by remember { mutableStateOf(gatewayTokenState) }
+    
+    // HTTP inputs
+    var httpUrl by remember { mutableStateOf(webhookUrl) }
+    var httpToken by remember { mutableStateOf(authToken) }
+    
+    // Update local state if runtime state changes behind the scenes
+    LaunchedEffect(manualHostState, manualPortState, manualTlsState, gatewayTokenState) {
+        gatewayHost = manualHostState
+        gatewayPort = manualPortState.toString()
+        gatewayTls = manualTlsState
+        gatewayToken = gatewayTokenState
     }
-    var unifiedToken by remember(connectionType, authToken, gatewayTokenState) {
-        mutableStateOf(
-            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayTokenState else authToken
-        )
+    LaunchedEffect(webhookUrl, authToken) {
+        httpUrl = webhookUrl
+        httpToken = authToken
     }
 
     LaunchedEffect(Unit) {
@@ -213,30 +234,21 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             settings.connectionType = connectionType
-                            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                                // Parse Unified URL into Host, Port, TLS
-                                val urlTrimmed = unifiedUrl.trim().trimEnd('/')
-                                val isHttps = urlTrimmed.startsWith("https://", ignoreCase = true)
-                                val schemeRemoved = urlTrimmed.removePrefix("http://").removePrefix("https://")
-                                val parts = schemeRemoved.split(":", limit = 2)
-                                val host = parts.getOrNull(0) ?: ""
-                                val port = parts.getOrNull(1)?.toIntOrNull() ?: if (isHttps) 443 else 18789
+                            
+                            // Save Gateway Settings
+                            runtime.setManualEnabled(true)
+                            runtime.setManualHost(gatewayHost.trim())
+                            runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
+                            runtime.setManualTls(gatewayTls)
+                            runtime.setGatewayToken(gatewayToken.trim())
 
-                                runtime.setManualEnabled(true)
-                                runtime.setManualHost(host)
-                                runtime.setManualPort(port)
-                                runtime.setManualTls(isHttps)
-                                runtime.setGatewayToken(unifiedToken.trim())
-                                
-                                settings.webhookUrl = webhookUrl // Keep previous legacy value
-                                settings.authToken = authToken.trim()
-                            } else {
-                                settings.webhookUrl = unifiedUrl.trim()
-                                settings.authToken = unifiedToken.trim()
-                                // keep legacy logic aligned
-                                webhookUrl = unifiedUrl.trim()
-                                authToken = unifiedToken.trim()
-                            }
+                            // Save HTTP Settings
+                            settings.webhookUrl = httpUrl.trim()
+                            settings.authToken = httpToken.trim()
+                            
+                            // Update local legacy refs to keep them aligned
+                            webhookUrl = httpUrl.trim()
+                            authToken = httpToken.trim()
 
                             settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
@@ -318,11 +330,6 @@ fun SettingsScreen(
                                 selected = connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY,
                                 onClick = { 
                                     connectionType = SettingsRepository.CONNECTION_TYPE_GATEWAY
-                                    // update unified fields with gateway values
-                                    val proto = if (manualTlsState) "https://" else "http://"
-                                    val portStr = if (manualPortState > 0) ":$manualPortState" else ""
-                                    unifiedUrl = if (manualHostState.isNotBlank()) "$proto$manualHostState$portStr" else ""
-                                    unifiedToken = gatewayTokenState
                                 },
                                 label = { Text("Gateway") },
                                 modifier = Modifier.weight(1f)
@@ -331,8 +338,6 @@ fun SettingsScreen(
                                 selected = connectionType == SettingsRepository.CONNECTION_TYPE_HTTP,
                                 onClick = { 
                                     connectionType = SettingsRepository.CONNECTION_TYPE_HTTP
-                                    unifiedUrl = webhookUrl
-                                    unifiedToken = authToken
                                 },
                                 label = { Text("HTTP") },
                                 modifier = Modifier.weight(1f)
@@ -341,49 +346,96 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Unified URL and Token fields
-                        OutlinedTextField(
-                            value = unifiedUrl,
-                            onValueChange = { 
-                                unifiedUrl = it
-                                testResult = null
-                            },
-                            label = { Text(stringResource(R.string.webhook_url_label)) },
-                            placeholder = { 
-                                if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
-                                    Text("http://192.168.1.100:18789")
-                                } else {
-                                    Text(stringResource(R.string.webhook_url_hint))
-                                }
-                            },
-                            leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                        )
+                        if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                            Text("Gateway Configuration", style = MaterialTheme.typography.titleSmall)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = gatewayHost,
+                                    onValueChange = { gatewayHost = it; testResult = null },
+                                    label = { Text("Host") },
+                                    modifier = Modifier.weight(2f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                )
+                                OutlinedTextField(
+                                    value = gatewayPort,
+                                    onValueChange = { gatewayPort = it.filter { char -> char.isDigit() }; testResult = null },
+                                    label = { Text("Port") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            OutlinedTextField(
+                                value = gatewayToken,
+                                onValueChange = { gatewayToken = it; testResult = null },
+                                label = { Text("Gateway Token") },
+                                trailingIcon = {
+                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                        Icon(
+                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Require TLS (HTTPS)")
+                                Switch(
+                                    checked = gatewayTls,
+                                    onCheckedChange = { gatewayTls = it; testResult = null }
+                                )
+                            }
+                        } else {
+                            Text("HTTP API Configuration", style = MaterialTheme.typography.titleSmall)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            OutlinedTextField(
+                                value = httpUrl,
+                                onValueChange = { httpUrl = it; testResult = null },
+                                label = { Text(stringResource(R.string.webhook_url_label)) },
+                                placeholder = { Text(stringResource(R.string.webhook_url_hint)) },
+                                leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                            )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                        OutlinedTextField(
-                            value = unifiedToken,
-                            onValueChange = { 
-                                unifiedToken = it.trim()
-                                testResult = null
-                            },
-                            label = { Text(stringResource(R.string.auth_token_label)) },
-                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                            trailingIcon = {
-                                IconButton(onClick = { showNodeToken = !showNodeToken }) {
-                                    Icon(
-                                        if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = null
-                                    )
-                                }
-                            },
-                            visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+                            OutlinedTextField(
+                                value = httpToken,
+                                onValueChange = { httpToken = it.trim(); testResult = null },
+                                label = { Text(stringResource(R.string.auth_token_label)) },
+                                leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                        Icon(
+                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
 
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -463,23 +515,17 @@ fun SettingsScreen(
                                     Button(
                                         modifier = Modifier.weight(1f),
                                         onClick = { 
-                                            // Quick start logic using unified UI, it mirrors save button
-                                            val urlTrimmed = unifiedUrl.trim().trimEnd('/')
-                                            if (urlTrimmed.isBlank()) {
+                                            // Quick start logic using gateway UI
+                                            if (gatewayHost.isBlank()) {
                                                  Toast.makeText(context, context.getString(R.string.gateway_invalid_params), Toast.LENGTH_SHORT).show()
                                                  return@Button
                                             }
-                                            val isHttps = urlTrimmed.startsWith("https://", ignoreCase = true)
-                                            val schemeRemoved = urlTrimmed.removePrefix("http://").removePrefix("https://")
-                                            val parts = schemeRemoved.split(":", limit = 2)
-                                            val host = parts.getOrNull(0) ?: ""
-                                            val port = parts.getOrNull(1)?.toIntOrNull() ?: if (isHttps) 443 else 18789
 
                                             runtime.setManualEnabled(true)
-                                            runtime.setManualHost(host)
-                                            runtime.setManualPort(port)
-                                            runtime.setManualTls(isHttps)
-                                            runtime.setGatewayToken(unifiedToken.trim())
+                                            runtime.setManualHost(gatewayHost.trim())
+                                            runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
+                                            runtime.setManualTls(gatewayTls)
+                                            runtime.setGatewayToken(gatewayToken.trim())
                                             runtime.connectManual()
                                             
                                             Toast.makeText(context, context.getString(R.string.gateway_connecting), Toast.LENGTH_SHORT).show()
@@ -605,21 +651,37 @@ fun SettingsScreen(
                             // Test Connection Button
                             Button(
                                 onClick = {
-                                    if (unifiedUrl.isBlank()) return@Button
+                                    val testUrlRaw = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                        val proto = if (gatewayTls) "https://" else "http://"
+                                        val portStr = if ((gatewayPort.toIntOrNull() ?: 18789) > 0) ":${gatewayPort}" else ""
+                                        if (gatewayHost.isNotBlank()) "$proto$gatewayHost$portStr" else ""
+                                    } else {
+                                        httpUrl
+                                    }
+                                    val testTokenRaw = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayToken else httpToken
+
+                                    if (testUrlRaw.isBlank()) return@Button
                                     scope.launch {
                                         try {
                                             isTesting = true
                                             testResult = null
                                             // Compute chat completions URL for testing
-                                            val testUrl = unifiedUrl.trimEnd('/').let { url ->
+                                            val testUrl = testUrlRaw.trimEnd('/').let { url ->
                                                 if (url.contains("/v1/")) url else "$url/v1/chat/completions"
                                             }
-                                            val result = apiClient.testConnection(testUrl, unifiedToken.trim())
+                                            val result = apiClient.testConnection(testUrl, testTokenRaw.trim())
                                             result.fold(
                                                 onSuccess = {
                                                     testResult = TestResult(success = true, message = context.getString(R.string.connected))
-                                                    settings.webhookUrl = unifiedUrl.trim()
-                                                    settings.authToken = unifiedToken.trim()
+                                                    if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                                        runtime.setManualHost(gatewayHost.trim())
+                                                        runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
+                                                        runtime.setManualTls(gatewayTls)
+                                                        runtime.setGatewayToken(gatewayToken.trim())
+                                                    } else {
+                                                        settings.webhookUrl = httpUrl.trim()
+                                                        settings.authToken = httpToken.trim()
+                                                    }
                                                     settings.isVerified = true
 
                                                     // Fetch agent list via WebSocket
@@ -683,7 +745,7 @@ fun SettingsScreen(
                                         else -> MaterialTheme.colorScheme.primary
                                     }
                                 ),
-                                enabled = unifiedUrl.isNotBlank() && !isTesting
+                                enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpUrl.isNotBlank()) && !isTesting
                             ) {
                                 if (isTesting) {
                                     CircularProgressIndicator(
@@ -1058,7 +1120,7 @@ fun SettingsScreen(
                                     selected = wakeWordEngine == SettingsRepository.WAKE_WORD_ENGINE_CLASSIC,
                                     onClick = { wakeWordEngine = SettingsRepository.WAKE_WORD_ENGINE_CLASSIC }
                                 )
-                                Text("Classic (Local)", style = MaterialTheme.typography.bodyMedium)
+                                Text(stringResource(R.string.wake_word_engine_vosk), style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                         
@@ -1071,10 +1133,39 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Gateway handles wake word detection. Configure its listening mode here.",
+                                text = stringResource(R.string.wake_word_gateway_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.Gray
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Wake word edit field
+                            OutlinedTextField(
+                                value = gatewayWakeWordsText,
+                                onValueChange = {
+                                    gatewayWakeWordsText = it
+                                    gatewayWakeWordsHadFocus = true
+                                },
+                                label = { Text(stringResource(R.string.wake_words_label)) },
+                                placeholder = { Text(stringResource(R.string.wake_words_placeholder)) },
+                                leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                supportingText = {
+                                    Text(stringResource(R.string.wake_words_help), color = Color.Gray, fontSize = 12.sp)
+                                },
+                                trailingIcon = {
+                                    if (gatewayWakeWordsHadFocus) {
+                                        IconButton(onClick = {
+                                            commitGatewayWakeWords()
+                                            gatewayWakeWordsHadFocus = false
+                                        }) {
+                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            )
+
                             Spacer(modifier = Modifier.height(8.dp))
 
                             // Action status text
@@ -1116,6 +1207,12 @@ fun SettingsScreen(
                                 HorizontalDivider(thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
                                 var syncInProgress by remember { mutableStateOf(false) }
                                 var syncMessage by remember { mutableStateOf<String?>(null) }
+                                Text(
+                                    text = stringResource(R.string.wake_word_sync_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                                Spacer(Modifier.height(4.dp))
                                 OutlinedButton(
                                     modifier = Modifier.fillMaxWidth(),
                                     onClick = {
@@ -1123,6 +1220,7 @@ fun SettingsScreen(
                                         scope.launch {
                                             try {
                                                 runtime.refreshWakeWordsFromGateway()
+                                                gatewayWakeWordsHadFocus = false
                                                 syncMessage = context.getString(R.string.wake_word_sync_success)
                                             } catch (e: Exception) {
                                                 syncMessage = context.getString(R.string.wake_word_sync_failed)

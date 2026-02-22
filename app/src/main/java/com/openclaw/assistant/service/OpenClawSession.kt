@@ -280,8 +280,8 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
             val startTime = System.currentTimeMillis()
             var hasActuallySpoken = false
             
-            // Wait for resources - Reduced from 500ms as we now reuse SpeechRecognizer
-            delay(50)
+            // Wait for HotwordService to release the microphone before starting SpeechRecognizer
+            delay(300)
 
             while (isActive && !hasActuallySpoken) {
                 // Request audio focus

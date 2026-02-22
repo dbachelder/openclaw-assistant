@@ -297,13 +297,6 @@ fun ChatScreen(
                             defaultAgentId = uiState.defaultAgentId,
                             onAgentSelected = onAgentSelected
                         )
-                        if (uiState.isNodeChatMode) {
-                            Text(
-                                text = "Node backend",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
                     }
                 },
                 navigationIcon = {

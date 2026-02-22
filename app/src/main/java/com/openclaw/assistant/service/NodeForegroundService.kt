@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.app.PendingIntent
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
@@ -30,9 +32,24 @@ class NodeForegroundService : Service() {
   private var lastRequiresMic = false
   private var didStartForeground = false
 
+  private val pauseResumeReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      val runtime = (application as OpenClawApplication).nodeRuntime
+      when (intent.action) {
+        ACTION_PAUSE_HOTWORD -> runtime.pauseVoiceWake()
+        ACTION_RESUME_HOTWORD -> runtime.resumeVoiceWake()
+      }
+    }
+  }
+
   override fun onCreate() {
     super.onCreate()
     ensureChannel()
+    val filter = IntentFilter().apply {
+      addAction(ACTION_PAUSE_HOTWORD)
+      addAction(ACTION_RESUME_HOTWORD)
+    }
+    ContextCompat.registerReceiver(this, pauseResumeReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
     val initial = buildNotification(title = "OpenClaw Node", text = "Starting…")
     startForegroundWithTypes(notification = initial, requiresMic = false)
 
@@ -86,6 +103,7 @@ class NodeForegroundService : Service() {
   }
 
   override fun onDestroy() {
+    unregisterReceiver(pauseResumeReceiver)
     notificationJob?.cancel()
     scope.cancel()
     super.onDestroy()
@@ -175,6 +193,8 @@ class NodeForegroundService : Service() {
     private const val NOTIFICATION_ID = 1
 
     private const val ACTION_STOP = "com.openclaw.assistant.action.STOP"
+    private const val ACTION_PAUSE_HOTWORD = "com.openclaw.assistant.ACTION_PAUSE_HOTWORD"
+    private const val ACTION_RESUME_HOTWORD = "com.openclaw.assistant.ACTION_RESUME_HOTWORD"
 
     fun start(context: Context) {
       val intent = Intent(context, NodeForegroundService::class.java)

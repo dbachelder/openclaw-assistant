@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 const val DEFAULT_SEAM_COLOR_ARGB: Long = 0xFF4F7A9A
 
 data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+data class Quint<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
 
 fun String.toJsonString(): String {
     val escaped =

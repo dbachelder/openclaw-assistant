@@ -1,11 +1,14 @@
 package com.openclaw.assistant.voice
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +56,12 @@ class VoiceWakeManager(
 
       try {
         recognizer?.destroy()
-        recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { it.setRecognitionListener(listener) }
+        val serviceComponent = findRecognitionService(context)
+        recognizer = if (serviceComponent != null) {
+          SpeechRecognizer.createSpeechRecognizer(context, serviceComponent)
+        } else {
+          SpeechRecognizer.createSpeechRecognizer(context)
+        }.also { it.setRecognitionListener(listener) }
         startListeningInternal()
       } catch (err: Throwable) {
         _isListening.value = false
@@ -170,4 +178,20 @@ class VoiceWakeManager(
 
       override fun onEvent(eventType: Int, params: Bundle?) {}
     }
+
+  private fun findRecognitionService(ctx: Context): ComponentName? {
+    val pm = ctx.packageManager
+    val services = pm.queryIntentServices(
+      Intent(RecognitionService.SERVICE_INTERFACE),
+      PackageManager.GET_META_DATA,
+    )
+    val ownPackage = ctx.packageName
+    val google = services.firstOrNull {
+      it.serviceInfo.packageName == "com.google.android.googlequicksearchbox"
+    }
+    if (google != null) return ComponentName(google.serviceInfo.packageName, google.serviceInfo.name)
+    val other = services.firstOrNull { it.serviceInfo.packageName != ownPackage }
+    if (other != null) return ComponentName(other.serviceInfo.packageName, other.serviceInfo.name)
+    return null
+  }
 }

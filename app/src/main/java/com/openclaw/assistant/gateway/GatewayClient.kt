@@ -287,6 +287,23 @@ class GatewayClient(context: android.content.Context) {
         }
     }
 
+    /**
+     * Patch a session on the gateway to update its label or other properties.
+     */
+    suspend fun patchSession(sessionKey: String, label: String? = null): Boolean {
+        val params = JsonObject().apply {
+            addProperty("key", sessionKey)
+            if (label != null) addProperty("label", label)
+        }
+        return try {
+            val result = request("sessions.patch", params)
+            result.ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to patch session: ${e.message}")
+            false
+        }
+    }
+
     // --- Internal: Run loop with auto-reconnect ---
 
     private suspend fun runLoop() {

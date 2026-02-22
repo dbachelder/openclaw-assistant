@@ -20,6 +20,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import com.openclaw.assistant.chat.ChatMessage
 import com.openclaw.assistant.chat.ChatPendingToolCall
 
@@ -32,10 +45,16 @@ fun ChatMessageListCard(
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
+  var previousMessageCount by remember { mutableIntStateOf(messages.size) }
 
   // With reverseLayout the newest item is at index 0 (bottom of screen).
   LaunchedEffect(messages.size, pendingRunCount, pendingToolCalls.size, streamingAssistantText) {
-    listState.animateScrollToItem(index = 0)
+    if (messages.size > previousMessageCount + 1 || previousMessageCount == 0) {
+      listState.scrollToItem(index = 0)
+    } else {
+      listState.animateScrollToItem(index = 0)
+    }
+    previousMessageCount = messages.size
   }
 
   Card(
@@ -84,6 +103,32 @@ fun ChatMessageListCard(
 
       if (messages.isEmpty() && pendingRunCount == 0 && pendingToolCalls.isEmpty() && streamingAssistantText.isNullOrBlank()) {
         EmptyChatHint(modifier = Modifier.align(Alignment.Center))
+      }
+
+      val showScrollToBottom by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 2 }
+      }
+
+      androidx.compose.animation.AnimatedVisibility(
+        visible = showScrollToBottom,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier
+          .align(Alignment.BottomEnd)
+          .padding(end = 16.dp, bottom = 16.dp)
+      ) {
+        val coroutineScope = rememberCoroutineScope()
+        SmallFloatingActionButton(
+          onClick = {
+            coroutineScope.launch {
+              listState.animateScrollToItem(0)
+            }
+          },
+          containerColor = MaterialTheme.colorScheme.secondaryContainer,
+          contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ) {
+          Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom")
+        }
       }
     }
   }
