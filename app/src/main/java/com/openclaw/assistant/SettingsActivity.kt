@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -68,28 +69,28 @@ fun SettingsScreen(
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
-    var webhookUrl by remember { mutableStateOf(settings.webhookUrl) }
-    var authToken by remember { mutableStateOf(settings.authToken) }
-    var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
-    var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
-    var ttsSpeed by remember { mutableStateOf(settings.ttsSpeed) }
-    var continuousMode by remember { mutableStateOf(settings.continuousMode) }
-    var resumeLatestSession by remember { mutableStateOf(settings.resumeLatestSession) }
-    var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
-    var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
-    var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
-    var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
-    var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
+    var webhookUrl by rememberSaveable { mutableStateOf(settings.webhookUrl) }
+    var authToken by rememberSaveable { mutableStateOf(settings.authToken) }
+    var defaultAgentId by rememberSaveable { mutableStateOf(settings.defaultAgentId) }
+    var ttsEnabled by rememberSaveable { mutableStateOf(settings.ttsEnabled) }
+    var ttsSpeed by rememberSaveable { mutableStateOf(settings.ttsSpeed) }
+    var continuousMode by rememberSaveable { mutableStateOf(settings.continuousMode) }
+    var resumeLatestSession by rememberSaveable { mutableStateOf(settings.resumeLatestSession) }
+    var wakeWordPreset by rememberSaveable { mutableStateOf(settings.wakeWordPreset) }
+    var customWakeWord by rememberSaveable { mutableStateOf(settings.customWakeWord) }
+    var speechSilenceTimeout by rememberSaveable { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
+    var speechLanguage by rememberSaveable { mutableStateOf(settings.speechLanguage) }
+    var thinkingSoundEnabled by rememberSaveable { mutableStateOf(settings.thinkingSoundEnabled) }
 
-    var showAuthToken by remember { mutableStateOf(false) }
-    var showWakeWordMenu by remember { mutableStateOf(false) }
-    var showLanguageMenu by remember { mutableStateOf(false) }
+    var showAuthToken by rememberSaveable { mutableStateOf(false) }
+    var showWakeWordMenu by rememberSaveable { mutableStateOf(false) }
+    var showLanguageMenu by rememberSaveable { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val apiClient = remember { OpenClawClient() }
     
-    var isTesting by remember { mutableStateOf(false) }
+    var isTesting by rememberSaveable { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
     // Agent list from gateway
@@ -101,13 +102,13 @@ fun SettingsScreen(
     val availableAgents = remember(agentListState) { 
         agentListState?.agents?.distinctBy { it.id } ?: emptyList() 
     }
-    var isFetchingAgents by remember { mutableStateOf(false) }
-    var showAgentMenu by remember { mutableStateOf(false) }
+    var isFetchingAgents by rememberSaveable { mutableStateOf(false) }
+    var showAgentMenu by rememberSaveable { mutableStateOf(false) }
 
     // TTS Engines
-    var ttsEngine by remember { mutableStateOf(settings.ttsEngine) }
+    var ttsEngine by rememberSaveable { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
-    var showEngineMenu by remember { mutableStateOf(false) }
+    var showEngineMenu by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
