@@ -96,7 +96,22 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
-        
+        val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+
+        // Auto-enable capabilities when permission is newly granted
+        val runtime = (applicationContext as OpenClawApplication).nodeRuntime
+        if (cameraGranted) {
+            runtime.setCameraEnabled(true)
+        }
+        if (coarseGranted) {
+            runtime.setLocationMode(com.openclaw.assistant.LocationMode.WhileUsing)
+            runtime.setLocationPreciseEnabled(fineGranted)
+        } else if (fineGranted) {
+            runtime.setLocationPreciseEnabled(true)
+        }
+
         if (pendingHotwordStart) {
             pendingHotwordStart = false
             if (recordAudioGranted) {
@@ -218,12 +233,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun refreshAllPermissionsStatus() {
         val list = mutableListOf<PermissionStatusInfo>()
-        list.add(PermissionStatusInfo("Microphone", ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED))
-        list.add(PermissionStatusInfo("Camera", ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED))
-        list.add(PermissionStatusInfo("Location (Fine)", ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED))
-        list.add(PermissionStatusInfo("Location (Coarse)", ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED))
+        list.add(PermissionStatusInfo(getString(R.string.permission_record_audio), ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED))
+        list.add(PermissionStatusInfo(getString(R.string.permission_camera), ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED))
+        list.add(PermissionStatusInfo(getString(R.string.permission_location_fine), ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED))
+        list.add(PermissionStatusInfo(getString(R.string.permission_location_coarse), ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            list.add(PermissionStatusInfo("Notifications", ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED))
+            list.add(PermissionStatusInfo(getString(R.string.permission_notifications), ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED))
         }
         allPermissionsStatus = list
     }
@@ -364,6 +379,7 @@ fun MainScreen(
     val nodeStatusText by runtime.statusText.collectAsState()
     var showTroubleshooting by remember { mutableStateOf(false) }
     var showHowToUse by remember { mutableStateOf(false) }
+    var showLocationInfo by remember { mutableStateOf(false) }
     
     var showScreenCaptureDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -489,7 +505,7 @@ fun MainScreen(
 
             // === CAPABILITIES CONTROLS ===
             Text(
-                text = stringResource(R.string.capabilities_title),
+                text = stringResource(R.string.permissions_for_openclaw_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
@@ -506,7 +522,22 @@ fun MainScreen(
                     icon = Icons.Default.PhotoCamera,
                     label = stringResource(R.string.capability_camera),
                     isActive = cameraEnabled,
-                    onClick = { runtime.setCameraEnabled(!cameraEnabled) },
+                    onClick = {
+                        if (!cameraEnabled) {
+                            // Turning ON: check permission first
+                            val granted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.CAMERA
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (granted) {
+                                runtime.setCameraEnabled(true)
+                            } else {
+                                onRequestPermissions(listOf(Manifest.permission.CAMERA))
+                                // Will be enabled in permissionLauncher if granted
+                            }
+                        } else {
+                            runtime.setCameraEnabled(false)
+                        }
+                    },
                     modifier = Modifier.weight(1f)
                 )
 
@@ -515,24 +546,42 @@ fun MainScreen(
                     icon = Icons.Default.LocationOn,
                     label = stringResource(R.string.capability_location),
                     statusText = when {
-                        locationMode == LocationMode.Off -> "Off"
-                        locationPrecise -> "Precise"
-                        else -> "Coarse"
+                        locationMode == LocationMode.Off -> stringResource(R.string.location_off)
+                        locationPrecise -> stringResource(R.string.location_precise)
+                        else -> stringResource(R.string.location_coarse)
                     },
                     isActive = locationMode != LocationMode.Off,
                     onClick = {
                         if (locationMode == LocationMode.Off) {
-                            // Off -> WhileUsing (Coarse)
-                            runtime.setLocationMode(LocationMode.WhileUsing)
-                            runtime.setLocationPreciseEnabled(false)
+                            // OFF -> Coarse: check COARSE permission first
+                            val coarseGranted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_COARSE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (coarseGranted) {
+                                runtime.setLocationMode(LocationMode.WhileUsing)
+                                runtime.setLocationPreciseEnabled(false)
+                            } else {
+                                onRequestPermissions(listOf(
+                                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    Manifest.permission.ACCESS_FINE_LOCATION
+                                ))
+                            }
                         } else if (!locationPrecise) {
-                            // WhileUsing (Coarse) -> WhileUsing (Precise)
-                            runtime.setLocationPreciseEnabled(true)
+                            // Coarse -> Precise: check FINE permission first
+                            val fineGranted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (fineGranted) {
+                                runtime.setLocationPreciseEnabled(true)
+                            } else {
+                                onRequestPermissions(listOf(Manifest.permission.ACCESS_FINE_LOCATION))
+                            }
                         } else {
-                            // WhileUsing (Precise) -> Off
+                            // Precise -> OFF
                             runtime.setLocationMode(LocationMode.Off)
                         }
                     },
+                    onLongClick = { showLocationInfo = true },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -690,6 +739,18 @@ fun MainScreen(
 
     if (showTroubleshooting) TroubleshootingDialog(onDismiss = { showTroubleshooting = false })
     if (showHowToUse) HowToUseDialog(onDismiss = { showHowToUse = false })
+    if (showLocationInfo) {
+        AlertDialog(
+            onDismissRequest = { showLocationInfo = false },
+            title = { Text(stringResource(R.string.location_info_title)) },
+            text = { Text(stringResource(R.string.location_info_message)) },
+            confirmButton = {
+                TextButton(onClick = { showLocationInfo = false }) {
+                    Text(stringResource(R.string.got_it))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -935,7 +996,13 @@ fun PermissionDiagnosticsPanel(allPermissionsStatus: List<PermissionStatusInfo>,
                     Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(perm.permissionName, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                    Text(if (perm.isGranted) "Granted" else "Denied", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color)
+                    Text(
+                        if (perm.isGranted) stringResource(R.string.permission_status_granted)
+                        else stringResource(R.string.permission_status_denied),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = color
+                    )
                 }
             }
         }

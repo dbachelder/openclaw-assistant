@@ -192,6 +192,7 @@
     <string name="report_issue_desc">バグの報告や機能のリクエストはこちらから（GitHub）</string>
 
     <!-- Device Node & Capabilities -->
+    <string name="permissions_for_openclaw_title">OpenClawに渡す権限</string>
     <string name="capabilities_title">デバイス機能</string>
     <string name="capability_camera">カメラ</string>
     <string name="capability_talk">会話</string>
@@ -252,6 +253,12 @@
     <string name="error_start_failed">起動エラー: %s</string>
     <string name="permissions_missing_title">権限が必要です</string>
     <string name="permission_grant">許可</string>
+    <string name="permission_status_granted">許可済み</string>
+    <string name="permission_status_denied">未許可</string>
+    <string name="permission_camera">カメラ</string>
+    <string name="permission_location_fine">正確な位置情報</string>
+    <string name="permission_location_coarse">おおまかな位置情報</string>
+    <string name="permission_notifications">通知</string>
     <string name="permission_record_audio">マイク</string>
     <string name="permission_record_audio_desc">音声入力とウェイクワード検知に必要</string>
     <string name="permission_post_notifications">通知</string>
@@ -284,11 +291,11 @@
     <string name="wake_word_sync_failed">同期に失敗しました</string>
 
     <!-- Location Mode Info -->
-    <string name="location_off">OFF</string>
-    <string name="location_coarse">大まか</string>
-    <string name="location_precise">精密（GPS）</string>
-    <string name="location_info_title">位置情報の精度モード</string>
-    <string name="location_info_message">OFF: AIは位置情報にアクセスできません。\n\n大まか: 市区町村レベル。バッテリー消費少。\n\n精密: GPS精度。バッテリー消費多。\n\nこのカードを長押しすると再確認できます。</string>
+    <string name="location_off">オフ</string>
+    <string name="location_coarse">おおまかな位置 (市区町村レベル)</string>
+    <string name="location_precise">正確な位置 (GPS)</string>
+    <string name="location_info_title">位置情報の精度設定</string>
+    <string name="location_info_message">オフ: AIはあなたの位置情報に一切アクセスできません。\n\nおおまかな位置: 市区町村レベルの範囲を共有します。バッテリー消費を抑えられます。\n\n正確な位置: GPSを使用し、詳細な現在地を共有します。より具体的な場所に基づいた回答が可能になります。\n\n※この項目を長押しすると、いつでもこの説明を確認できます。</string>
 
     <!-- App Version -->
     <string name="app_version">バージョン %s</string>

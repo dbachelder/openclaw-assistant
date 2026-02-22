@@ -204,6 +204,12 @@
     <string name="permission_post_notifications">Notifications</string>
     <string name="permission_post_notifications_desc">Required to show hotword service status</string>
     <string name="permission_grant">Grant</string>
+    <string name="permission_status_granted">Granted</string>
+    <string name="permission_status_denied">Denied</string>
+    <string name="permission_camera">Camera</string>
+    <string name="permission_location_fine">Precise Location</string>
+    <string name="permission_location_coarse">Coarse Location</string>
+    <string name="permission_notifications">Notifications</string>
 
     <!-- Fix Request -->
     <string name="fix_request_label">To fix, ask your AI:</string>
@@ -232,6 +238,7 @@
     <string name="report_issue_desc">Found a bug or have a feature request? Let us know on GitHub.</string>
 
     <!-- Device Node & Capabilities -->
+    <string name="permissions_for_openclaw_title">Permissions for OpenClaw</string>
     <string name="capabilities_title">Capabilities</string>
     <string name="capability_camera">Camera</string>
     <string name="capability_talk">Talk</string>
