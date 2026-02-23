@@ -30,10 +30,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.openclaw.assistant.chat.ChatMarkdownPreprocessor
 
 @Composable
 fun ChatMarkdown(text: String, textColor: Color) {
-  val blocks = remember(text) { splitMarkdown(text) }
+  val blocks = remember(text) { splitMarkdown(ChatMarkdownPreprocessor.preprocess(text)) }
   val inlineCodeBg = textColor.copy(alpha = 0.15f)
 
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
