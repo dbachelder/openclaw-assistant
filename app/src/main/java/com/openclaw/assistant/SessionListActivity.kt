@@ -229,12 +229,12 @@ fun SessionListScreen(
             title = { Text(stringResource(R.string.new_chat)) },
             text = { 
                 Column {
-                    Text("Enter session name")
+                    Text(stringResource(R.string.enter_session_name))
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(
                         value = inputName,
                         onValueChange = { inputName = it },
-                        label = { Text("Session Name (Optional)") },
+                        label = { Text(stringResource(R.string.session_name_optional)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -251,7 +251,7 @@ fun SessionListScreen(
                     val finalName = if (inputName.isNotBlank()) inputName else "New Conversation"
                     onCreateSession(finalName, false)
                 }) {
-                    Text("Create")
+                    Text(stringResource(R.string.create))
                 }
             }
         )
@@ -322,7 +322,7 @@ private fun SessionListItem(
                         shape = MaterialTheme.shapes.small
                     ) {
                         Text(
-                            text = if (session.isGateway) "Gateway" else "HTTP",
+                            text = if (session.isGateway) stringResource(R.string.tab_gateway) else stringResource(R.string.tab_http),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             color = if (session.isGateway) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onTertiaryContainer

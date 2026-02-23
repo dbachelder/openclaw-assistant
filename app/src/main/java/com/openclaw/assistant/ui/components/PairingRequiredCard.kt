@@ -130,7 +130,7 @@ fun PairingRequiredCard(deviceId: String, displayName: String = "") {
                 onClick = { expanded = !expanded },
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
-                Text(if (expanded) "Hide Instructions" else "Show Instructions")
+                Text(if (expanded) stringResource(R.string.hide_instructions) else stringResource(R.string.show_instructions))
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
             }
 

@@ -286,7 +286,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
 
                         // Connection Configuration Tabs
-                        Text("Connection Settings", style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.connection_settings), style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(8.dp))
 
                         TabRow(
@@ -297,26 +297,26 @@ fun SettingsScreen(
                             Tab(
                                 selected = selectedTabIndex == 0,
                                 onClick = { selectedTabIndex = 0 },
-                                text = { Text("Gateway") }
+                                text = { Text(stringResource(R.string.tab_gateway)) }
                             )
                             Tab(
                                 selected = selectedTabIndex == 1,
                                 onClick = { selectedTabIndex = 1 },
-                                text = { Text("HTTP") }
+                                text = { Text(stringResource(R.string.tab_http)) }
                             )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
                         if (selectedTabIndex == 0) {
-                            Text("Gateway Configuration", style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.gateway_configuration), style = MaterialTheme.typography.titleSmall)
                             Spacer(modifier = Modifier.height(8.dp))
 
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     value = gatewayHost,
                                     onValueChange = { gatewayHost = it; testResult = null },
-                                    label = { Text("Host") },
+                                    label = { Text(stringResource(R.string.gateway_host)) },
                                     modifier = Modifier.weight(2f),
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
@@ -324,7 +324,7 @@ fun SettingsScreen(
                                 OutlinedTextField(
                                     value = gatewayPort,
                                     onValueChange = { gatewayPort = it.filter { char -> char.isDigit() }; testResult = null },
-                                    label = { Text("Port") },
+                                    label = { Text(stringResource(R.string.gateway_port)) },
                                     modifier = Modifier.weight(1f),
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -336,7 +336,7 @@ fun SettingsScreen(
                             OutlinedTextField(
                                 value = gatewayToken,
                                 onValueChange = { gatewayToken = it; testResult = null },
-                                label = { Text("Gateway Token") },
+                                label = { Text(stringResource(R.string.gateway_token)) },
                                 trailingIcon = {
                                     IconButton(onClick = { showNodeToken = !showNodeToken }) {
                                         Icon(
@@ -367,7 +367,7 @@ fun SettingsScreen(
                                 )
                             }
                         } else if (selectedTabIndex == 1) {
-                            Text("HTTP API Configuration", style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.http_api_configuration), style = MaterialTheme.typography.titleSmall)
                             Spacer(modifier = Modifier.height(8.dp))
                             
                             OutlinedTextField(

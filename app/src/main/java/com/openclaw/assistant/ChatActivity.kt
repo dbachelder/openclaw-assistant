@@ -455,7 +455,7 @@ fun ChatScreen(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         ) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom")
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.scroll_to_bottom))
                         }
                     }
                 }
@@ -640,7 +640,7 @@ fun PendingToolsIndicator(toolCalls: List<String>) {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Running tools",
+                    text = stringResource(R.string.running_tools),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
                 )

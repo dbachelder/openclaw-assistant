@@ -349,4 +349,20 @@
     <string name="wake_words_help">Comma-separated words that activate the assistant (e.g. "openclaw, claude")</string>
     <string name="state_verify_fingerprint">Verify gateway TLS fingerprint…</string>
     <string name="state_failed_fingerprint">Failed: can\'t read TLS fingerprint</string>
+
+    <!-- Hardcoded strings extracted to resources -->
+    <string name="connection_settings">Connection Settings</string>
+    <string name="tab_gateway">Gateway</string>
+    <string name="tab_http">HTTP</string>
+    <string name="gateway_configuration">Gateway Configuration</string>
+    <string name="http_api_configuration">HTTP API Configuration</string>
+    <string name="enter_session_name">Enter session name</string>
+    <string name="session_name_optional">Session Name (Optional)</string>
+    <string name="running_tools">Running tools</string>
+    <string name="scroll_to_bottom">Scroll to bottom</string>
+    <string name="hide_instructions">Hide Instructions</string>
+    <string name="show_instructions">Show Instructions</string>
+    <string name="diagnostic_engines">Engines</string>
+    <string name="diagnostic_app_permissions">App Permissions</string>
+    <string name="technical_details">Technical Details:</string>
 </resources>

@@ -76,7 +76,7 @@
     <string name="debug_force_start">デバッグ: 強制セッション開始</string>
     
     <!-- Settings Screen -->
-    <string name="connection">Connection</string>
+    <string name="connection">接続</string>
     <string name="voice">音声</string>
     <string name="wake_word">ウェイクワード</string>
     <string name="voice_output">音声出力</string>
@@ -136,6 +136,44 @@
     <!-- Hotword mic unavailable notification -->
     <string name="notification_mic_unavailable_title">マイクを利用できません</string>
     <string name="notification_mic_unavailable_content">他のアプリがマイクを使用中か、デバイスの設定を確認してください</string>
+
+    <!-- Session List -->
+    <string name="no_sessions">まだ会話がありません。＋をタップして新しい会話を始めましょう。</string>
+    <string name="session_name_label">名前</string>
+    <string name="session_name_hint">例: 仕事、旅行、勉強</string>
+    <string name="create">作成</string>
+    <string name="delete_session_title">会話を削除しますか？</string>
+    <string name="delete_session_message">「%s」は完全に削除されます。</string>
+
+    <!-- Screen Capture Dialog -->
+    <string name="screen_capture_title">画面キャプチャを開始しますか？</string>
+    <string name="screen_capture_message">AIがあなたの画面を録画して内容を確認できるようになります。</string>
+    <string name="start">開始</string>
+    <string name="stop">停止</string>
+
+    <!-- Wake Word Mode (additional) -->
+    <string name="wake_word_engine_vosk">Vosk（ローカル）</string>
+    <string name="wake_words_label">ウェイクワード</string>
+    <string name="wake_words_placeholder">openclaw, claude</string>
+    <string name="wake_words_help">アシスタントを起動するカンマ区切りの言葉（例: "openclaw, claude"）</string>
+    <string name="wake_word_gateway_desc">このデバイスがウェイクワードを検出してゲートウェイにコマンドを送ります。アシスタントを起動したい言葉を入力してください。</string>
+    <string name="wake_word_sync_desc">ゲートウェイサーバーで設定されたウェイクワードをこのデバイスにダウンロードします。</string>
+
+    <!-- Hardcoded strings extracted to resources -->
+    <string name="connection_settings">接続設定</string>
+    <string name="tab_gateway">Gateway</string>
+    <string name="tab_http">HTTP</string>
+    <string name="gateway_configuration">ゲートウェイ設定</string>
+    <string name="http_api_configuration">HTTP API設定</string>
+    <string name="enter_session_name">セッション名を入力</string>
+    <string name="session_name_optional">セッション名（任意）</string>
+    <string name="running_tools">ツールを実行中</string>
+    <string name="scroll_to_bottom">最下部へスクロール</string>
+    <string name="hide_instructions">手順を閉じる</string>
+    <string name="show_instructions">手順を表示</string>
+    <string name="diagnostic_engines">エンジン</string>
+    <string name="diagnostic_app_permissions">アプリの権限</string>
+    <string name="technical_details">技術的な詳細：</string>
 
     <!-- Chat UI -->
     <string name="conversations_title">会話</string>
