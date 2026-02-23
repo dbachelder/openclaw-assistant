@@ -343,6 +343,10 @@ class ChatController(
       "final", "aborted", "error" -> {
         if (state == "error") {
           _errorText.value = payload["errorMessage"].asStringOrNull() ?: "Chat failed"
+        } else {
+          // Clear any intermediate stream errors (e.g. from agent "stream=error" events)
+          // that fired before the final chat result arrived.
+          _errorText.value = null
         }
         // Clear the specific pending run if known, otherwise clear all pending runs.
         val knownPending = runId != null && synchronized(pendingRuns) { pendingRuns.contains(runId) }

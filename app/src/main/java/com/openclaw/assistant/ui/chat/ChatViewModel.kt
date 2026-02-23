@@ -257,9 +257,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Observe agent list from NodeRuntime
         viewModelScope.launch {
             nodeRuntime.agentList.collect { agentListResult ->
-                _uiState.update { it.copy(
-                    availableAgents = agentListResult?.agents ?: emptyList()
-                )}
+                val apiDefaultId = agentListResult?.defaultId
+                _uiState.update { state ->
+                    // If user hasn't overridden the default agent, resolve it from the API's defaultId
+                    val resolvedDefaultId = if (state.defaultAgentId == "main" && !apiDefaultId.isNullOrBlank()) {
+                        apiDefaultId
+                    } else {
+                        state.defaultAgentId
+                    }
+                    state.copy(
+                        availableAgents = agentListResult?.agents ?: emptyList(),
+                        defaultAgentId = resolvedDefaultId
+                    )
+                }
             }
         }
 
@@ -308,6 +318,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _initialSessionTitle.value = initialTitle
             }
             nodeRuntime.loadChat(sessionId)
+            // After bootstrap (chat.history), re-apply the session label.
+            // The gateway creates new sessions with the device name as default label,
+            // so we patch after the session actually exists on the gateway.
+            if (!initialTitle.isNullOrBlank()) {
+                val label = initialTitle
+                viewModelScope.launch {
+                    withTimeoutOrNull(10_000L) {
+                        nodeRuntime.chatSessions.first { sessions ->
+                            sessions.any { it.key == sessionId }
+                        }
+                    }
+                    nodeRuntime.patchChatSession(sessionId, label)
+                    nodeRuntime.refreshChatSessions()
+                }
+            }
         } else {
             _currentSessionId.value = sessionId
             settings.sessionId = sessionId

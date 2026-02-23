@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
@@ -63,7 +65,7 @@ fun ChatMessageBubble(message: ChatMessage) {
       tonalElevation = 0.dp,
       shadowElevation = 0.dp,
       color = Color.Transparent,
-      modifier = Modifier.fillMaxWidth(0.92f),
+      modifier = Modifier.widthIn(min = 80.dp, max = LocalConfiguration.current.screenWidthDp.dp * 0.85f),
     ) {
       Box(
         modifier =
@@ -176,8 +178,9 @@ fun ChatStreamingAssistantBubble(text: String) {
 @Composable
 private fun bubbleBackground(isUser: Boolean): Brush {
   return if (isUser) {
+    // Use a solid warm amber that has better readability than pure deep-orange on dark backgrounds
     Brush.linearGradient(
-      colors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)),
+      colors = listOf(Color(0xFFE64A19), Color(0xFFBF360C)),
     )
   } else {
     Brush.linearGradient(

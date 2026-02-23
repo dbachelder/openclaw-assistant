@@ -483,7 +483,10 @@ fun MainScreen(
             val locationMode by runtime.locationMode.collectAsState()
             val locationPrecise by runtime.locationPreciseEnabled.collectAsState()
             
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // === CAPABILITIES: all 4 in one row ===
+            val hasTelephony = remember { runtime.sms.hasTelephonyFeature() }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Camera Toggle
                 CapabilityCard(
                     icon = Icons.Default.PhotoCamera,
@@ -491,7 +494,6 @@ fun MainScreen(
                     isActive = cameraEnabled,
                     onClick = {
                         if (!cameraEnabled) {
-                            // Turning ON: check permission first
                             val granted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.CAMERA
                             ) == PackageManager.PERMISSION_GRANTED
@@ -499,7 +501,6 @@ fun MainScreen(
                                 runtime.setCameraEnabled(true)
                             } else {
                                 onRequestPermissions(listOf(Manifest.permission.CAMERA))
-                                // Will be enabled in permissionLauncher if granted
                             }
                         } else {
                             runtime.setCameraEnabled(false)
@@ -509,18 +510,18 @@ fun MainScreen(
                 )
 
                 // Location Toggle (Cycle)
+                val locationStatusText = when {
+                    locationMode == LocationMode.Off -> stringResource(R.string.location_off)
+                    locationPrecise -> stringResource(R.string.location_precise)
+                    else -> stringResource(R.string.location_coarse)
+                }
                 CapabilityCard(
                     icon = Icons.Default.LocationOn,
                     label = stringResource(R.string.capability_location),
-                    statusText = when {
-                        locationMode == LocationMode.Off -> stringResource(R.string.location_off)
-                        locationPrecise -> stringResource(R.string.location_precise)
-                        else -> stringResource(R.string.location_coarse)
-                    },
                     isActive = locationMode != LocationMode.Off,
+                    statusText = locationStatusText,
                     onClick = {
                         if (locationMode == LocationMode.Off) {
-                            // OFF -> Coarse: check COARSE permission first
                             val coarseGranted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.ACCESS_COARSE_LOCATION
                             ) == PackageManager.PERMISSION_GRANTED
@@ -534,7 +535,6 @@ fun MainScreen(
                                 ))
                             }
                         } else if (!locationPrecise) {
-                            // Coarse -> Precise: check FINE permission first
                             val fineGranted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.ACCESS_FINE_LOCATION
                             ) == PackageManager.PERMISSION_GRANTED
@@ -544,57 +544,45 @@ fun MainScreen(
                                 onRequestPermissions(listOf(Manifest.permission.ACCESS_FINE_LOCATION))
                             }
                         } else {
-                            // Precise -> OFF
                             runtime.setLocationMode(LocationMode.Off)
                         }
                     },
                     onLongClick = { showLocationInfo = true },
                     modifier = Modifier.weight(1f)
                 )
-            }
 
-            // === SMS & SCREEN CAPABILITIES (2nd row) ===
-            val hasTelephony = remember { runtime.sms.hasTelephonyFeature() }
-
-            if (hasTelephony || true) { // Screen capture always shown when runtime supports it
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (hasTelephony) {
-                        CapabilityCard(
-                            icon = Icons.Default.Sms,
-                            label = stringResource(R.string.capability_sms),
-                            isActive = smsEnabled,
-                            statusText = stringResource(if (smsEnabled) R.string.capability_on else R.string.capability_off),
-                            onClick = {
-                                if (smsEnabled) {
-                                    runtime.setSmsEnabled(false)
-                                } else {
-                                    val granted = ContextCompat.checkSelfPermission(
-                                        context, Manifest.permission.SEND_SMS
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    if (granted) {
-                                        runtime.setSmsEnabled(true)
-                                    } else {
-                                        onRequestPermissions(listOf(Manifest.permission.SEND_SMS))
-                                        // setSmsEnabled(true) is called from permissionLauncher on grant
-                                    }
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                // SMS Toggle
+                if (hasTelephony) {
                     CapabilityCard(
-                        icon = if (screenRecordActive) Icons.AutoMirrored.Filled.StopScreenShare else Icons.AutoMirrored.Filled.ScreenShare,
-                        label = stringResource(R.string.capability_screen),
-                        isActive = screenRecordActive,
-                        statusText = stringResource(if (screenRecordActive) R.string.capability_screen_active else R.string.capability_off),
-                        onClick = { showScreenCaptureDialog = true },
+                        icon = Icons.Default.Sms,
+                        label = stringResource(R.string.capability_sms),
+                        isActive = smsEnabled,
+                        onClick = {
+                            if (smsEnabled) {
+                                runtime.setSmsEnabled(false)
+                            } else {
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.SEND_SMS
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) {
+                                    runtime.setSmsEnabled(true)
+                                } else {
+                                    onRequestPermissions(listOf(Manifest.permission.SEND_SMS))
+                                }
+                            }
+                        },
                         modifier = Modifier.weight(1f)
                     )
-                    if (!hasTelephony) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
                 }
+
+                // Screen Capture Toggle
+                CapabilityCard(
+                    icon = if (screenRecordActive) Icons.AutoMirrored.Filled.StopScreenShare else Icons.AutoMirrored.Filled.ScreenShare,
+                    label = stringResource(R.string.capability_screen),
+                    isActive = screenRecordActive,
+                    onClick = { showScreenCaptureDialog = true },
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -637,7 +625,7 @@ fun MainScreen(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     icon = Icons.Default.Home,
                     title = stringResource(R.string.home_button),
-                    description = if (isAssistantSet) stringResource(R.string.active) else stringResource(R.string.not_set),
+                    description = if (isAssistantSet) "ON" else "OFF",
                     isActive = isAssistantSet,
                     onClick = onOpenAssistantSettings,
                     showInfoIcon = true,
@@ -652,7 +640,7 @@ fun MainScreen(
                     switchValue = hotwordEnabled,
                     onSwitchChange = { enabled ->
                         (context as? MainActivity)?.toggleHotwordService(enabled)
-                        hotwordEnabled = settings.hotwordEnabled
+                        hotwordEnabled = enabled
                     },
                     isActive = hotwordEnabled,
                     showInfoIcon = false
@@ -783,52 +771,40 @@ fun SystemStatusCard(
     val statusDotColor = if (connected) Color(0xFF4CAF50) else Color(0xFFF44336)
 
     Card(
-        modifier = Modifier.fillMaxWidth(), 
-        shape = RoundedCornerShape(24.dp), 
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
             contentColor = contentColor
         )
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(12.dp)
+                        .size(10.dp)
                         .clip(CircleShape)
                         .background(statusDotColor)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (connected) stringResource(R.string.status_online) else stringResource(R.string.status_offline),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = statusLabelColor,
-                    letterSpacing = 1.sp
+                    text = stringResource(R.string.app_name),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = statusText,
+                    fontSize = 13.sp,
+                    color = contentColor.copy(alpha = 0.8f),
+                    modifier = Modifier.weight(1f)
+                )
                 IconButton(onClick = onOpenSettings, modifier = Modifier.size(24.dp)) {
                     Icon(Icons.Default.Settings, contentDescription = "Settings", tint = contentColor.copy(alpha = 0.6f))
                 }
             }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            Text(
-                text = stringResource(R.string.app_name),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-                // color inherits from Card contentColor
-            )
-            
-            Text(
-                text = statusText,
-                fontSize = 14.sp,
-                color = contentColor.copy(alpha = 0.8f),
-                modifier = Modifier.padding(top = 4.dp)
-            )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (connected) {
@@ -873,7 +849,7 @@ fun CapabilityCard(
 ) {
     Card(
         modifier = modifier
-            .height(100.dp)
+            .height(72.dp)
             .then(
                 if (onLongClick != null) {
                     Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -887,28 +863,28 @@ fun CapabilityCard(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
+            modifier = Modifier.fillMaxSize().padding(8.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                imageVector = icon, 
-                contentDescription = null, 
+                imageVector = icon,
+                contentDescription = null,
                 tint = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(24.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = label, 
-                fontSize = 13.sp, 
+                text = label,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (statusText != null) {
                 Text(
                     text = statusText,
-                    fontSize = 10.sp,
-                    color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    fontSize = 9.sp,
+                    color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                 )
             }
         }
@@ -1007,14 +983,14 @@ fun CompactActionCard(modifier: Modifier = Modifier, icon: ImageVector, title: S
         Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Column(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(modifier = Modifier.fillMaxWidth().height(32.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = icon, contentDescription = null, tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray, modifier = Modifier.size(28.dp))
+                    Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                     if (showInfoIcon) Icon(imageVector = Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).clickable { onInfoClick?.invoke() })
                     if (showSwitch) Switch(checked = switchValue, onCheckedChange = onSwitchChange, modifier = Modifier.scale(0.8f).offset(y = (-8).dp))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
-            Text(text = description, fontSize = 12.sp, color = if (isActive) Color(0xFF4CAF50) else Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(text = description, fontSize = 12.sp, color = if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
