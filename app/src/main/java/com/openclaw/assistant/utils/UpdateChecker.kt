@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.openclaw.assistant.Constants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -22,13 +23,13 @@ data class GithubRelease(
 )
 
 object UpdateChecker {
-    private const val TAG = "UpdateChecker"
-    private const val GITHUB_API_URL = "https://api.github.com/repos/yuga-hashimoto/openclaw-assistant/releases/latest"
+    private const val TAG = Constants.TAG_UPDATE
+    private const val GITHUB_API_URL = Constants.GITHUB_API_RELEASES
     
     // Use a short timeout for update checks so it doesn't block startup long
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(Constants.UPDATE_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(Constants.UPDATE_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
         
     private val gson = Gson()

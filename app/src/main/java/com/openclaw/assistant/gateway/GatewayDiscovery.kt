@@ -8,6 +8,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.CancellationSignal
 import android.util.Log
+import com.openclaw.assistant.Constants
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
@@ -51,9 +52,9 @@ class GatewayDiscovery(
   private val nsd = context.getSystemService(NsdManager::class.java)
   private val connectivity = context.getSystemService(ConnectivityManager::class.java)
   private val dns = DnsResolver.getInstance()
-  private val serviceType = "_openclaw-gw._tcp."
+  private val serviceType = Constants.GATEWAY_SERVICE_TYPE
   private val wideAreaDomain = System.getenv("OPENCLAW_WIDE_AREA_DOMAIN")
-  private val logTag = "OpenClaw/GatewayDiscovery"
+  private val logTag = Constants.TAG_GATEWAY
 
   private val localById = ConcurrentHashMap<String, GatewayEndpoint>()
   private val unicastById = ConcurrentHashMap<String, GatewayEndpoint>()

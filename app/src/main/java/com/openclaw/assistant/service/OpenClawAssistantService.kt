@@ -15,6 +15,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.openclaw.assistant.Constants
 
 /**
  * Voice Interaction Service
@@ -23,9 +24,9 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 class OpenClawAssistantService : VoiceInteractionService() {
 
     companion object {
-        private const val TAG = "OpenClawAssistantSvc"
-        private const val PENDING_SESSION_TIMEOUT_MS = 30_000L
-        const val ACTION_SHOW_ASSISTANT = "com.openclaw.assistant.ACTION_SHOW_ASSISTANT"
+        private const val TAG = Constants.TAG_ASSISTANT
+        private const val PENDING_SESSION_TIMEOUT_MS = Constants.PENDING_SESSION_TIMEOUT_MS
+        const val ACTION_SHOW_ASSISTANT = Constants.ACTION_SHOW_ASSISTANT
     }
 
     private var isServiceReady = false

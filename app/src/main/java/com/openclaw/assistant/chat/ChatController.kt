@@ -1,5 +1,6 @@
 package com.openclaw.assistant.chat
 
+import com.openclaw.assistant.Constants
 import com.openclaw.assistant.gateway.GatewaySession
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -57,7 +58,7 @@ class ChatController(
 
   private val pendingRuns = mutableSetOf<String>()
   private val pendingRunTimeoutJobs = ConcurrentHashMap<String, Job>()
-  private val pendingRunTimeoutMs = 120_000L
+  private val pendingRunTimeoutMs = Constants.PENDING_RUN_TIMEOUT_MS
 
   private var bootstrapJob: Job? = null
 

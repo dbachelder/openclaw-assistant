@@ -4,6 +4,7 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.openclaw.assistant.Constants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,9 +20,9 @@ import java.util.concurrent.TimeUnit
 class OpenClawClient {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(Constants.CONNECTION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(Constants.READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .writeTimeout(Constants.WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
 
     private val gson = Gson()

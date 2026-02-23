@@ -2,6 +2,9 @@
 -keepattributes *Annotation*
 -keepattributes SourceFile,LineNumberTable
 
+# Constants - must be kept for access from multiple classes
+-keep class com.openclaw.assistant.Constants { *; }
+
 # OkHttp
 -dontwarn okhttp3.**
 -dontwarn okio.**

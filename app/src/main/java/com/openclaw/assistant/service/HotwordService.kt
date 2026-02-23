@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.openclaw.assistant.Constants
 import com.openclaw.assistant.MainActivity
 import com.openclaw.assistant.R
 import com.google.firebase.crashlytics.FirebaseCrashlytics
@@ -37,12 +38,12 @@ import org.json.JSONObject
 class HotwordService : Service(), VoskRecognitionListener {
 
     companion object {
-        private const val TAG = "HotwordService"
-        private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID = "hotword_channel"
-        private const val SAMPLE_RATE = 16000.0f
-        const val ACTION_RESUME_HOTWORD = "com.openclaw.assistant.ACTION_RESUME_HOTWORD"
-        const val ACTION_PAUSE_HOTWORD = "com.openclaw.assistant.ACTION_PAUSE_HOTWORD"
+        private const val TAG = Constants.TAG_HOTWORD
+        private const val NOTIFICATION_ID = Constants.HOTWORD_NOTIFICATION_ID
+        private const val CHANNEL_ID = Constants.HOTWORD_CHANNEL_ID
+        private const val SAMPLE_RATE = Constants.SAMPLE_RATE
+        const val ACTION_RESUME_HOTWORD = Constants.ACTION_RESUME_HOTWORD
+        const val ACTION_PAUSE_HOTWORD = Constants.ACTION_PAUSE_HOTWORD
         
         fun start(context: Context) {
             val intent = Intent(context, HotwordService::class.java)
@@ -72,11 +73,11 @@ class HotwordService : Service(), VoskRecognitionListener {
     @Volatile private var isListeningForCommand = false
     @Volatile private var isSessionActive = false
     private var audioRetryCount = 0
-    private val MAX_AUDIO_RETRIES = 5
+    private val MAX_AUDIO_RETRIES = Constants.MAX_AUDIO_RETRIES
     private var watchdogJob: Job? = null
     private var errorRecoveryJob: Job? = null
     private var retryJob: Job? = null
-    private val SESSION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
+    private val SESSION_TIMEOUT_MS = Constants.SESSION_TIMEOUT_MS
 
     private val controlReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
