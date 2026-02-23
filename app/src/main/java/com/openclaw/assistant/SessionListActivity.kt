@@ -93,7 +93,6 @@ fun SessionListScreen(
     onCreateSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit
 ) {
-    var showNewSessionDialog by remember { mutableStateOf(false) }
     var sessionToDelete by remember { mutableStateOf<SessionEntity?>(null) }
 
     Scaffold(
@@ -108,8 +107,9 @@ fun SessionListScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showNewSessionDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.new_chat))
+            val newSessionName = stringResource(R.string.new_chat)
+            FloatingActionButton(onClick = { onCreateSession(newSessionName) }) {
+                Icon(Icons.Default.Add, contentDescription = newSessionName)
             }
         }
     ) { paddingValues ->
@@ -145,15 +145,7 @@ fun SessionListScreen(
         }
     }
 
-    if (showNewSessionDialog) {
-        NewSessionDialog(
-            onDismiss = { showNewSessionDialog = false },
-            onCreate = { name ->
-                showNewSessionDialog = false
-                onCreateSession(name)
-            }
-        )
-    }
+
 
     sessionToDelete?.let { session ->
         AlertDialog(
@@ -216,38 +208,3 @@ private fun SessionListItem(
     }
 }
 
-@Composable
-private fun NewSessionDialog(
-    onDismiss: () -> Unit,
-    onCreate: (String) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.new_chat)) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(stringResource(R.string.session_name_label)) },
-                placeholder = { Text(stringResource(R.string.session_name_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (name.isNotBlank()) onCreate(name.trim()) },
-                enabled = name.isNotBlank()
-            ) {
-                Text(stringResource(R.string.create))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.cancel))
-            }
-        }
-    )
-}

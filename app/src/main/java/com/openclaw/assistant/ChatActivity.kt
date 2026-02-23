@@ -489,8 +489,8 @@ fun DateHeader(dateText: String) {
 fun MessageBubble(message: ChatMessage) {
     val isUser = message.isUser
     val alignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
-    val containerColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
-    val contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val containerColor = if (isUser) Color(0xFFFFBCA3) else Color(0xFFE8F5E9) // Light green for AI
+    val contentColor = Color(0xFF1E1E1E) // Dark grey for both
 
     // Friendly rounded shapes with tail on sender's side
     val shape = if (isUser) {
@@ -521,6 +521,7 @@ fun MessageBubble(message: ChatMessage) {
                             text = message.text,
                             color = contentColor,
                             fontSize = 16.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
                             lineHeight = 24.sp
                         )
                     } else {
@@ -530,7 +531,7 @@ fun MessageBubble(message: ChatMessage) {
                         )
                     }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.align(Alignment.End),
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
