@@ -40,3 +40,9 @@
 -dontwarn org.slf4j.impl.**
 -dontwarn org.xbill.DNS.spi.**
 -keep class org.xbill.DNS.** { *; }
+
+# BouncyCastle — required for BKS KeyStore provider registration.
+# Without these rules, R8 strips the security provider registration code,
+# causing java.security.KeyStoreException: BKS not found at runtime.
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
