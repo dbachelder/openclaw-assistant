@@ -28,12 +28,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openclaw.assistant.api.OpenClawClient
+
 import com.openclaw.assistant.data.SettingsRepository
+import com.openclaw.assistant.service.NodeForegroundService
 import com.openclaw.assistant.service.HotwordService
+import com.openclaw.assistant.ui.components.CollapsibleSection
+import com.openclaw.assistant.ui.components.ConnectionState
 import com.openclaw.assistant.ui.components.PairingRequiredCard
+import com.openclaw.assistant.ui.components.StatusIndicator
 import com.openclaw.assistant.gateway.AgentInfo
-import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.openclaw.assistant.utils.SystemInfoProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -69,7 +74,7 @@ fun SettingsScreen(
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
-    var webhookUrl by rememberSaveable { mutableStateOf(settings.webhookUrl) }
+    var httpUrl by rememberSaveable { mutableStateOf(settings.httpUrl) }
     var authToken by rememberSaveable { mutableStateOf(settings.authToken) }
     var defaultAgentId by rememberSaveable { mutableStateOf(settings.defaultAgentId) }
     var ttsEnabled by rememberSaveable { mutableStateOf(settings.ttsEnabled) }
@@ -88,19 +93,21 @@ fun SettingsScreen(
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val runtime = remember(context.applicationContext) {
+        (context.applicationContext as OpenClawApplication).nodeRuntime
+    }
     val apiClient = remember { OpenClawClient() }
     
     var isTesting by rememberSaveable { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
-    // Agent list from gateway
-    val gatewayClient = remember { GatewayClient.getInstance() }
-    val isPairingRequired by gatewayClient.isPairingRequired.collectAsState()
-    val deviceId = gatewayClient.deviceId
+    // Agent list from NodeRuntime
+    val isPairingRequired by runtime.isPairingRequired.collectAsState()
+    val deviceId = runtime.deviceId
 
-    val agentListState by gatewayClient.agentList.collectAsState()
-    val availableAgents = remember(agentListState) { 
-        agentListState?.agents?.distinctBy { it.id } ?: emptyList() 
+    val agentListState by runtime.agentList.collectAsState()
+    val availableAgents = remember(agentListState) {
+        agentListState?.agents?.distinctBy { it.id } ?: emptyList()
     }
     var isFetchingAgents by rememberSaveable { mutableStateOf(false) }
     var showAgentMenu by rememberSaveable { mutableStateOf(false) }
@@ -109,26 +116,52 @@ fun SettingsScreen(
     var ttsEngine by rememberSaveable { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
     var showEngineMenu by rememberSaveable { mutableStateOf(false) }
+    var showNodeToken by rememberSaveable { mutableStateOf(false) }
+
+    val nodeConnected by runtime.isConnected.collectAsState()
+    val nodeStatus by runtime.statusText.collectAsState()
+    val nodeForeground by runtime.isForeground.collectAsState()
+
+    val manualEnabledState by runtime.manualEnabled.collectAsState()
+    val manualHostState by runtime.manualHost.collectAsState()
+    val manualPortState by runtime.manualPort.collectAsState()
+    val manualTlsState by runtime.manualTls.collectAsState()
+    val gatewayTokenState by runtime.gatewayToken.collectAsState()
+
+    // Connection Type
+    var connectionType by rememberSaveable { mutableStateOf(settings.connectionType) }
+
+    // Gateway inputs
+    var gatewayHost by rememberSaveable { mutableStateOf(manualHostState) }
+    var gatewayPort by rememberSaveable { mutableStateOf(manualPortState.toString()) }
+    var gatewayTls by rememberSaveable { mutableStateOf(manualTlsState) }
+    var gatewayToken by rememberSaveable { mutableStateOf(gatewayTokenState) }
+
+    // HTTP inputs
+    var httpInputUrl by rememberSaveable { mutableStateOf(httpUrl) }
+    var httpToken by rememberSaveable { mutableStateOf(authToken) }
+
+    // Update local state if runtime state changes behind the scenes
+    LaunchedEffect(manualHostState, manualPortState, manualTlsState, gatewayTokenState) {
+        gatewayHost = manualHostState
+        gatewayPort = manualPortState.toString()
+        gatewayTls = manualTlsState
+        gatewayToken = gatewayTokenState
+    }
+    LaunchedEffect(httpUrl, authToken) {
+        httpInputUrl = httpUrl
+        httpToken = authToken
+    }
 
     LaunchedEffect(Unit) {
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
     }
 
-    // Reactively observe agent list from gateway (updates after connection test)
+    // Fetch agent list on screen open if already connected
     LaunchedEffect(Unit) {
-        Log.e("SettingsActivity", "LaunchedEffect: Checking connection to fetch agents...")
-        if (gatewayClient.isConnected()) {
-            Log.e("SettingsActivity", "Already connected, fetching agent list...")
-            try {
-                gatewayClient.getAgentList()
-            } catch (e: Exception) {
-                Log.e("SettingsActivity", "Failed to auto-fetch agents: ${e.message}")
-            }
+        if (runtime.isConnected.value) {
+            runtime.refreshAgentList()
         }
-    }
-    
-    LaunchedEffect(availableAgents) {
-        Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
     }
 
     // Speech recognition language options - loaded dynamically from device
@@ -160,6 +193,10 @@ fun SettingsScreen(
         SettingsRepository.WAKE_WORD_CUSTOM to stringResource(R.string.wake_word_custom)
     )
 
+    var selectedTabIndex by remember {
+        mutableStateOf(if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) 0 else 1)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -172,8 +209,23 @@ fun SettingsScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            settings.webhookUrl = webhookUrl
-                            settings.authToken = authToken.trim()
+                            settings.connectionType = if (selectedTabIndex == 0) {
+                                SettingsRepository.CONNECTION_TYPE_GATEWAY
+                            } else {
+                                SettingsRepository.CONNECTION_TYPE_HTTP
+                            }
+
+                            // Save Gateway Settings
+                            runtime.setManualEnabled(true)
+                            runtime.setManualHost(gatewayHost.trim())
+                            runtime.setManualPort(gatewayPort.toIntOrNull() ?: 18789)
+                            runtime.setManualTls(gatewayTls)
+                            runtime.setGatewayToken(gatewayToken.trim())
+
+                            // Save HTTP Settings
+                            settings.httpUrl = httpInputUrl.trim()
+                            settings.authToken = httpToken.trim()
+
                             settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
@@ -185,12 +237,20 @@ fun SettingsScreen(
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
                             settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
+
+                            // Stop/Restart services
+                            HotwordService.stop(context)
+
+                            if (settings.connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                                runtime.connectManual()
+                            }
+
                             if (settings.hotwordEnabled) {
                                 HotwordService.start(context)
                             }
                             onSave()
                         },
-                        enabled = webhookUrl.isNotBlank() && !isTesting
+                        enabled = gatewayHost.isNotBlank() || httpInputUrl.isNotBlank()
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -211,70 +271,177 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-            // === CONNECTION SECTION ===
-            Text(
-                text = stringResource(R.string.connection),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
+            // === UNIFIED CONNECTION SECTION ===
+            CollapsibleSection(
+                title = stringResource(R.string.connection),
+                subtitle = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY && nodeConnected) nodeStatus.ifBlank { stringResource(R.string.connected) } else "",
+                initiallyExpanded = true
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    // Webhook URL
-                    OutlinedTextField(
-                        value = webhookUrl,
-                        onValueChange = { 
-                            webhookUrl = it
-                            testResult = null
-                        },
-                        label = { Text(stringResource(R.string.webhook_url_label) + " *") },
-                        placeholder = { Text(stringResource(R.string.webhook_url_hint)) },
-                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        isError = webhookUrl.isBlank()
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                        // Connection Configuration Tabs
+                        Text(stringResource(R.string.connection_settings), style = MaterialTheme.typography.labelLarge)
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    // Auth Token
-                    OutlinedTextField(
-                        value = authToken,
-                        onValueChange = { 
-                            authToken = it.trim()
-                            testResult = null
-                        },
-                        label = { Text(stringResource(R.string.auth_token_label)) },
-                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = { showAuthToken = !showAuthToken }) {
-                                Icon(
-                                    if (showAuthToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = null
+                        TabRow(
+                            selectedTabIndex = selectedTabIndex,
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = Color.Transparent,
+                        ) {
+                            Tab(
+                                selected = selectedTabIndex == 0,
+                                onClick = { selectedTabIndex = 0 },
+                                text = { Text(stringResource(R.string.tab_gateway)) }
+                            )
+                            Tab(
+                                selected = selectedTabIndex == 1,
+                                onClick = { selectedTabIndex = 1 },
+                                text = { Text(stringResource(R.string.tab_http)) }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (selectedTabIndex == 0) {
+                            Text(stringResource(R.string.gateway_configuration), style = MaterialTheme.typography.titleSmall)
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = gatewayHost,
+                                    onValueChange = { gatewayHost = it; testResult = null },
+                                    label = { Text(stringResource(R.string.gateway_host)) },
+                                    modifier = Modifier.weight(2f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                )
+                                OutlinedTextField(
+                                    value = gatewayPort,
+                                    onValueChange = { gatewayPort = it.filter { char -> char.isDigit() }; testResult = null },
+                                    label = { Text(stringResource(R.string.gateway_port)) },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                                 )
                             }
-                        },
-                        visualTransformation = if (showAuthToken) VisualTransformation.None else PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            OutlinedTextField(
+                                value = gatewayToken,
+                                onValueChange = { gatewayToken = it; testResult = null },
+                                label = { Text(stringResource(R.string.gateway_token)) },
+                                trailingIcon = {
+                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                        Icon(
+                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.gateway_use_tls), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.gateway_use_tls_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                                Switch(
+                                    checked = gatewayTls,
+                                    onCheckedChange = { gatewayTls = it; testResult = null }
+                                )
+                            }
+                        } else if (selectedTabIndex == 1) {
+                            Text(stringResource(R.string.http_api_configuration), style = MaterialTheme.typography.titleSmall)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            OutlinedTextField(
+                                value = httpInputUrl,
+                                onValueChange = { httpInputUrl = it; testResult = null },
+                                label = { Text(stringResource(R.string.webhook_url_label)) },
+                                placeholder = { Text(stringResource(R.string.webhook_url_hint)) },
+                                leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                            )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = httpToken,
+                                onValueChange = { httpToken = it.trim(); testResult = null },
+                                label = { Text(stringResource(R.string.auth_token_label)) },
+                                leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { showNodeToken = !showNodeToken }) {
+                                        Icon(
+                                            if (showNodeToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showNodeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                    // Default Agent
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        if (availableAgents.isNotEmpty()) {
+                        
+                        // Gateway Specific Settings
+                        if (selectedTabIndex == 0) {
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Foreground Service Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.gateway_foreground_service), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.gateway_foreground_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                                Switch(
+                                    checked = nodeForeground,
+                                    onCheckedChange = { enabled ->
+                                        runtime.setForeground(enabled)
+                                        if (enabled) NodeForegroundService.start(context) else NodeForegroundService.stop(context)
+                                    }
+                                )
+                            }
+                        }
+
+                        // HTTP Specific Settings
+                        if (selectedTabIndex == 1) {
+                            Text(
+                                text = stringResource(R.string.settings_legacy_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 12.dp, top = 12.dp)
+                            )
+                            
+                            // Default Agent
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (availableAgents.isNotEmpty()) {
                             // Dropdown when agents are loaded
                             ExposedDropdownMenuBox(
                                 expanded = showAgentMenu,
@@ -294,14 +461,10 @@ fun SettingsScreen(
                                                 IconButton(onClick = {
                                                     scope.launch {
                                                         isFetchingAgents = true
-                                                        if (gatewayClient.isConnected()) {
-                                                            try {
-                                                                gatewayClient.getAgentList()
-                                                            } catch (e: Exception) {
-                                                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                            }
+                                                        if (runtime.isConnected.value) {
+                                                            runtime.refreshAgentList()
                                                         } else {
-                                                            Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                            Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                         }
                                                         isFetchingAgents = false
                                                     }
@@ -349,14 +512,10 @@ fun SettingsScreen(
                                         IconButton(onClick = {
                                             scope.launch {
                                                 isFetchingAgents = true
-                                                if (gatewayClient.isConnected()) {
-                                                    try {
-                                                        gatewayClient.getAgentList()
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                    }
+                                                if (runtime.isConnected.value) {
+                                                    runtime.refreshAgentList()
                                                 } else {
-                                                    Toast.makeText(context, "Not connected to gateway", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                 }
                                                 isFetchingAgents = false
                                             }
@@ -371,124 +530,80 @@ fun SettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                    // Test Connection Button
-                    Button(
-                        onClick = {
-                            if (webhookUrl.isBlank()) return@Button
-                            scope.launch {
-                                try {
-                                    isTesting = true
-                                    testResult = null
-                                    // Compute chat completions URL for testing
-                                    val testUrl = webhookUrl.trimEnd('/').let { url ->
-                                        if (url.contains("/v1/")) url else "$url/v1/chat/completions"
-                                    }
-                                    val result = apiClient.testConnection(testUrl, authToken.trim())
-                                    result.fold(
-                                        onSuccess = {
-                                            testResult = TestResult(success = true, message = context.getString(R.string.connected))
-                                            settings.webhookUrl = webhookUrl
-                                            settings.authToken = authToken.trim()
-                                            settings.isVerified = true
-
-                                            // Fetch agent list via WebSocket
-                                            scope.launch {
-                                                isFetchingAgents = true
-                                                try {
-                                                    val baseUrl = settings.getBaseUrl()
-                                                    val parsedUrl = java.net.URL(baseUrl)
-                                                    val host = parsedUrl.host
-                                                    val useTls = parsedUrl.protocol == "https"
-                                                    val port = if (useTls) {
-                                                        if (parsedUrl.port > 0) parsedUrl.port else 443
-                                                    } else {
-                                                        if (settings.gatewayPort > 0) settings.gatewayPort else if (parsedUrl.port > 0) parsedUrl.port else 18789
-                                                    }
-                                                    val token = authToken.takeIf { t -> t.isNotBlank() }
-
-                                                    if (!gatewayClient.isConnected()) {
-                                                        gatewayClient.connect(host, port, token, useTls = useTls)
-                                                        // Wait for connection
-                                                        for (i in 1..20) {
-                                                            delay(250)
-                                                            if (gatewayClient.isConnected()) break
-                                                        }
-                                                    }
-
-                                                    if (gatewayClient.isConnected()) {
-                                                        Log.e("SettingsActivity", "Connection successful, fetching agent list...")
-                                                        try {
-                                                            val agentResult = gatewayClient.getAgentList()
-                                                            Log.e("SettingsActivity", "Agent list fetched: ${agentResult?.agents?.size ?: 0} agents")
-                                                        } catch (e: Exception) {
-                                                            Log.e("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                            // Show toast for this error specifically since it's part of the test
-                                                            Toast.makeText(context, "Connected, but failed to list agents: ${e.message}", Toast.LENGTH_LONG).show()
-                                                        }
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.w("SettingsActivity", "Failed to fetch agent list: ${e.message}")
-                                                } finally {
-                                                    isFetchingAgents = false
-                                                }
+                            // Test Connection Button
+                            Button(
+                                onClick = {
+                                    if (httpUrl.isBlank()) return@Button
+                                    scope.launch {
+                                        try {
+                                            isTesting = true
+                                            testResult = null
+                                            val testUrl = httpInputUrl.trimEnd('/').let { url ->
+                                                if (url.contains("/v1/")) url else "$url/v1/chat/completions"
                                             }
-                                        },
-                                        onFailure = {
-                                            testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
+                                            val result = apiClient.testConnection(testUrl, httpToken.trim())
+                                            result.fold(
+                                                onSuccess = {
+                                                    testResult = TestResult(success = true, message = context.getString(R.string.connected))
+                                                    settings.httpUrl = httpInputUrl.trim()
+                                                    settings.authToken = httpToken.trim()
+                                                    settings.isVerified = true
+                                                },
+                                                onFailure = {
+                                                    testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
+                                                }
+                                            )
+                                        } catch (e: Exception) {
+                                            testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
+                                        } finally {
+                                            isTesting = false
                                         }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = when {
+                                        testResult?.success == true -> Color(0xFF4CAF50)
+                                        testResult?.success == false -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                ),
+                                enabled = httpInputUrl.isNotBlank() && !isTesting
+                            ) {
+                                if (isTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.dp
                                     )
-                                } catch (e: Exception) {
-                                    testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
-                                } finally {
-                                    isTesting = false
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.testing))
+                                } else {
+                                    Icon(
+                                        when {
+                                            testResult?.success == true -> Icons.Default.Check
+                                            testResult?.success == false -> Icons.Default.Error
+                                            else -> Icons.Default.NetworkCheck
+                                        },
+                                        contentDescription = null
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(testResult?.message ?: stringResource(R.string.test_connection_button))
                                 }
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = when {
-                                testResult?.success == true -> Color(0xFF4CAF50)
-                                testResult?.success == false -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.primary
-                            }
-                        ),
-                        enabled = webhookUrl.isNotBlank() && !isTesting
-                    ) {
-                        if (isTesting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.testing))
-                        } else {
-                            Icon(
-                                when {
-                                    testResult?.success == true -> Icons.Default.Check
-                                    testResult?.success == false -> Icons.Default.Error
-                                    else -> Icons.Default.NetworkCheck
-                                },
-                                contentDescription = null
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(testResult?.message ?: stringResource(R.string.test_connection_button))
-                        }
-                    }
                 }
-            }
+                        Spacer(modifier = Modifier.height(24.dp))
+                    } // end Column
+                } // end Card
+            } // end CollapsibleSection for Unified Connection
+
 
             Spacer(modifier = Modifier.height(24.dp))
 
             // === VOICE SECTION ===
-            Text(
-                text = stringResource(R.string.voice),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            CollapsibleSection(title = stringResource(R.string.voice)) {
 
             // --- Speech Language card ---
             Card(
@@ -758,88 +873,95 @@ fun SettingsScreen(
                 }
             }
 
+            } // end CollapsibleSection for Voice
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // === WAKE WORD SECTION ===
-            Text(
-                text = stringResource(R.string.wake_word),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            CollapsibleSection(title = stringResource(R.string.wake_word)) {
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    ExposedDropdownMenuBox(
-                        expanded = showWakeWordMenu,
-                        onExpandedChange = { showWakeWordMenu = it }
-                    ) {
-                        OutlinedTextField(
-                            value = wakeWordOptions.find { it.first == wakeWordPreset }?.second ?: stringResource(R.string.wake_word_openclaw),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.activation_phrase)) },
-                            leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showWakeWordMenu) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
-                        )
-                        
-                        ExposedDropdownMenu(
-                            expanded = showWakeWordMenu,
-                            onDismissRequest = { showWakeWordMenu = false }
-                        ) {
-                            wakeWordOptions.forEach { (value, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        wakeWordPreset = value
-                                        showWakeWordMenu = false
-                                    },
-                                    leadingIcon = {
-                                        if (wakeWordPreset == value) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                        }
+
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = stringResource(R.string.wake_word_classic_title),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ExposedDropdownMenuBox(
+                                expanded = showWakeWordMenu,
+                                onExpandedChange = { showWakeWordMenu = it }
+                            ) {
+                                OutlinedTextField(
+                                    value = wakeWordOptions.find { it.first == wakeWordPreset }?.second ?: stringResource(R.string.wake_word_openclaw),
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text(stringResource(R.string.activation_phrase)) },
+                                    leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showWakeWordMenu) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                
+                                ExposedDropdownMenu(
+                                    expanded = showWakeWordMenu,
+                                    onDismissRequest = { showWakeWordMenu = false }
+                                ) {
+                                    wakeWordOptions.forEach { (value, label) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                wakeWordPreset = value
+                                                showWakeWordMenu = false
+                                            },
+                                            leadingIcon = {
+                                                if (wakeWordPreset == value) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            if (wakeWordPreset == SettingsRepository.WAKE_WORD_CUSTOM) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedTextField(
+                                    value = customWakeWord,
+                                    onValueChange = { customWakeWord = it.lowercase() },
+                                    label = { Text(stringResource(R.string.custom_wake_word)) },
+                                    placeholder = { Text(stringResource(R.string.custom_wake_word_hint)) },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    supportingText = {
+                                        Text(stringResource(R.string.custom_wake_word_help), color = Color.Gray, fontSize = 12.sp)
                                     }
                                 )
                             }
-                        }
-                    }
-                    
-                    if (wakeWordPreset == SettingsRepository.WAKE_WORD_CUSTOM) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = customWakeWord,
-                            onValueChange = { customWakeWord = it.lowercase() },
-                            label = { Text(stringResource(R.string.custom_wake_word)) },
-                            placeholder = { Text(stringResource(R.string.custom_wake_word_hint)) },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+
+
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
+
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            supportingText = {
-                                Text(stringResource(R.string.custom_wake_word_help), color = Color.Gray, fontSize = 12.sp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
-                        )
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 0.5.dp)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.resume_latest_session), style = MaterialTheme.typography.bodyLarge)
-                            Text(stringResource(R.string.resume_latest_session_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
                         }
-                        Switch(checked = resumeLatestSession, onCheckedChange = { resumeLatestSession = it })
                     }
                 }
             }
@@ -847,12 +969,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // === SUPPORT SECTION ===
-            Text(
-                text = stringResource(R.string.support_section),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            CollapsibleSection(title = stringResource(R.string.support_section), collapsible = false) {
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -873,7 +990,9 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = {
-                            val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings)
+                            val openClawVersion = runtime.serverVersion.value
+                            Log.d("SettingsActivity", "Report Issue clicked. serverVersion: $openClawVersion")
+                            val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings, openClawVersion)
                             val body = "\n\n$systemInfo"
                             val uri = Uri.parse("https://github.com/yuga-hashimoto/openclaw-assistant/issues/new")
                                 .buildUpon()
@@ -888,8 +1007,62 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.report_issue))
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val versionName = remember {
+                        runCatching {
+                            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                        }.getOrNull() ?: ""
+                    }
+                    var isCheckingUpdate by remember { mutableStateOf(false) }
+
+                    Button(
+                        onClick = {
+                            isCheckingUpdate = true
+                            scope.launch {
+                                val info = com.openclaw.assistant.utils.UpdateChecker.checkUpdate(versionName)
+                                isCheckingUpdate = false
+                                if (info != null && info.hasUpdate) {
+                                    Toast.makeText(context, context.getString(R.string.update_available, info.latestVersion), Toast.LENGTH_LONG).show()
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                    context.startActivity(intent)
+                                } else if (info != null) {
+                                    Toast.makeText(context, context.getString(R.string.up_to_date), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, context.getString(R.string.error_network), Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isCheckingUpdate) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.checking_update))
+                        } else {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.check_for_updates))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = stringResource(R.string.app_version, versionName),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             }
+
+            } // end CollapsibleSection for Support
 
             Spacer(modifier = Modifier.height(32.dp))
         }

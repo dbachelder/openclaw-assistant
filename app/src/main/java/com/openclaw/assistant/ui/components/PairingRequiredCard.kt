@@ -22,19 +22,22 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openclaw.assistant.OpenClawApplication
 import com.openclaw.assistant.R
-import com.openclaw.assistant.gateway.GatewayClient
 
 @Composable
-fun PairingRequiredCard(deviceId: String) {
+fun PairingRequiredCard(deviceId: String, displayName: String = "") {
     val context = LocalContext.current
-    val gatewayClient = remember { GatewayClient.getInstance(context) }
+    val nodeRuntime = remember { (context.applicationContext as OpenClawApplication).nodeRuntime }
     val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
 
-    // Command generation
-    val pythonScript = "import sys, json; print(next((r['Request'] for r in json.load(sys.stdin).get('pending', []) if r.get('Device') == '$deviceId'), 'NOT_FOUND'))"
-    val approveCommand = "openclaw devices approve \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
-    val rejectCommand = "openclaw devices reject \$(openclaw devices list --json | python3 -c \"$pythonScript\")"
+    // Command generation — match any field value against known identifiers (name or device ID hash).
+    // This avoids depending on specific field names that may change across openclaw versions.
+    val safeName = displayName.replace("\\", "\\\\").replace("'", "\\'")
+    val safeId = deviceId.replace("\\", "\\\\").replace("'", "\\'")
+    val pythonScript = "import sys,json;d=json.load(sys.stdin);ids={'$safeName','$safeId'};[print(v) for x in d.get('pending',[]) if any(str(v) in ids for v in x.values()) for k,v in x.items() if k.lower() in ('request','requestid')]"
+    val approveCommand = "openclaw devices list --json | python3 -c \"$pythonScript\" | while read id; do openclaw devices approve \"\$id\"; done"
+    val rejectCommand = "openclaw devices list --json | python3 -c \"$pythonScript\" | while read id; do openclaw devices reject \"\$id\"; done"
 
     var expanded by remember { mutableStateOf(false) }
 
@@ -113,7 +116,7 @@ fun PairingRequiredCard(deviceId: String) {
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
-                onClick = { gatewayClient.reconnect() },
+                onClick = { nodeRuntime.refreshGatewayConnection() },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
@@ -127,7 +130,7 @@ fun PairingRequiredCard(deviceId: String) {
                 onClick = { expanded = !expanded },
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
-                Text(if (expanded) "Hide Instructions" else "Show Instructions")
+                Text(if (expanded) stringResource(R.string.hide_instructions) else stringResource(R.string.show_instructions))
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
             }
 

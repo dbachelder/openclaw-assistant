@@ -14,7 +14,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Simple webhook client - POSTs to the configured URL
+ * Simple client - POSTs to the configured HTTP connection
  */
 class OpenClawClient {
 
@@ -27,18 +27,18 @@ class OpenClawClient {
     private val gson = Gson()
 
     /**
-     * POST message to webhook URL and return response
+     * POST message to HTTP connection and return response
      */
     suspend fun sendMessage(
-        webhookUrl: String,
+        httpUrl: String,
         message: String,
         sessionId: String,
         authToken: String? = null,
         agentId: String? = null
     ): Result<OpenClawResponse> = withContext(Dispatchers.IO) {
-        if (webhookUrl.isBlank()) {
+        if (httpUrl.isBlank()) {
             return@withContext Result.failure(
-                IllegalArgumentException("Webhook URL is not configured")
+                IllegalArgumentException("HTTP connection is not configured")
             )
         }
 
@@ -60,7 +60,7 @@ class OpenClawClient {
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
             val requestBuilder = Request.Builder()
-                .url(webhookUrl)
+                .url(httpUrl)
                 .post(jsonBody)
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "application/json")
@@ -105,22 +105,22 @@ class OpenClawClient {
     }
 
     /**
-     * Test connection to the webhook
+     * Test connection to the HTTP connection
      */
     suspend fun testConnection(
-        webhookUrl: String,
+        httpUrl: String,
         authToken: String?
     ): Result<Boolean> = withContext(Dispatchers.IO) {
-        if (webhookUrl.isBlank()) {
+        if (httpUrl.isBlank()) {
             return@withContext Result.failure(
-                IllegalArgumentException("Webhook URL is not configured")
+                IllegalArgumentException("HTTP connection is not configured")
             )
         }
 
         try {
             // Try a HEAD request first (lightweight)
             var requestBuilder = Request.Builder()
-                .url(webhookUrl)
+                .url(httpUrl)
                 .head()
 
             if (!authToken.isNullOrBlank()) {
@@ -160,7 +160,7 @@ class OpenClawClient {
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
             requestBuilder = Request.Builder()
-                .url(webhookUrl)
+                .url(httpUrl)
                 .post(jsonBody)
                 .addHeader("Content-Type", "application/json")
 

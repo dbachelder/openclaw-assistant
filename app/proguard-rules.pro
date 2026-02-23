@@ -32,3 +32,11 @@
 # Markdown renderer (JetBrains markdown parser)
 -keep class org.intellij.markdown.** { *; }
 -dontwarn org.intellij.markdown.**
+
+# dnsjava — uses Java SE / Sun APIs not available on Android
+-dontwarn javax.naming.**
+-dontwarn sun.net.spi.nameservice.**
+-dontwarn lombok.**
+-dontwarn org.slf4j.impl.**
+-dontwarn org.xbill.DNS.spi.**
+-keep class org.xbill.DNS.** { *; }

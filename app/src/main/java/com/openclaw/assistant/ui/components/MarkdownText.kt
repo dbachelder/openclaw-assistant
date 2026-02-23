@@ -24,7 +24,7 @@ fun MarkdownText(
             text = color,
             codeText = color,
             linkText = MaterialTheme.colorScheme.primary,
-            codeBackground = MaterialTheme.colorScheme.surfaceVariant,
+            codeBackground = color.copy(alpha = 0.15f),
         ),
         typography = markdownTypography(
             h1 = MaterialTheme.typography.headlineMedium.copy(
@@ -66,7 +66,7 @@ fun MarkdownText(
                 color = color,
                 fontSize = 14.sp,
                 fontFamily = FontFamily.Monospace,
-                background = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                background = color.copy(alpha = 0.15f)
             ),
             quote = TextStyle(
                 color = color.copy(alpha = 0.8f),

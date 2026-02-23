@@ -7,14 +7,15 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.openclaw.assistant.OpenClawApplication
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.gateway.AgentInfo
-import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.SpeechResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -44,9 +45,14 @@ data class ChatUiState(
     val selectedAgentId: String? = null, // null = use default from settings
     val defaultAgentId: String = "main", // From settings, for display when agent list unavailable
     val isPairingRequired: Boolean = false,
-    val deviceId: String? = null
+    val deviceId: String? = null,
+    val pendingToolCalls: List<String> = emptyList(),
+    val isNodeChatMode: Boolean = false,
+    val pendingGatewayTrust: com.openclaw.assistant.node.NodeRuntime.GatewayTrustPrompt? = null,
+    val displayName: String = ""
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -55,9 +61,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsRepository.getInstance(application)
     private val chatRepository = com.openclaw.assistant.data.repository.ChatRepository.getInstance(application)
     private val apiClient = OpenClawClient()
-    private val gatewayClient = GatewayClient.getInstance()
+    private val nodeRuntime = (application as OpenClawApplication).nodeRuntime
     private val speechManager = SpeechRecognizerManager(application)
     private val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
+    private val useNodeChat: Boolean
+        get() = settings.useNodeChat
 
     private var thinkingSoundJob: Job? = null
 
@@ -65,30 +73,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     
     // Session Management
-    val allSessions = chatRepository.allSessions.stateIn(
-        viewModelScope, 
-        SharingStarted.WhileSubscribed(5000), 
-        emptyList()
-    )
+    private val _allSessions = MutableStateFlow<List<com.openclaw.assistant.data.local.entity.SessionEntity>>(emptyList())
+    val allSessions: StateFlow<List<com.openclaw.assistant.data.local.entity.SessionEntity>> = _allSessions.asStateFlow()
     
     // Current Session
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
+
+    // Initial title passed via Intent (used before allSessions is loaded)
+    private val _initialSessionTitle = MutableStateFlow<String?>(null)
+    val initialSessionTitle: StateFlow<String?> = _initialSessionTitle.asStateFlow()
+
+    // Whether selectSessionOnStart() was called (session set via Intent before init completes)
+    private var sessionSelectedViaIntent = false
+
+    // Set when user sends a message in nodeChat mode; cleared after TTS is triggered.
+    // Avoids race condition between pendingRunCount→0 and chatMessages emitting.
+    private var pendingNodeChatTts = false
     
     // Sync current session with Settings if needed, or just let UI drive it?
     // Let's load the last one if available, or create new.
     
-    init {
-        // Load messages for current session if set
-        viewModelScope.launch {
-             // If we have a sessionId in settings, try to use it?
-             // Or better, let's start fresh or let user select.
-             // For now, let's observe whatever session we have.
-             
-             // Actually, we want to watch the session ID and update the message flow
-        }
-    }
-
     // Messages Flow - mapped from current Session ID
     private val _messagesFlow = _currentSessionId.flatMapLatest { sessionId ->
          if (sessionId != null) {
@@ -107,39 +112,164 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
          }
     }
     
-    // We combine _messagesFlow into uiState
+    // We combine local/remote message streams into uiState
     init {
-        viewModelScope.launch {
-            _messagesFlow.collect { messages ->
-                _uiState.update { it.copy(messages = messages) }
+        _uiState.update { it.copy(isNodeChatMode = useNodeChat) }
+        if (useNodeChat) {
+            // Remote sessions/messages via NodeRuntime
+            viewModelScope.launch {
+                nodeRuntime.chatSessions.collect { sessions ->
+                    val mapped = sessions.map { session ->
+                        com.openclaw.assistant.data.local.entity.SessionEntity(
+                            id = session.key,
+                            title = session.displayName ?: session.key,
+                            createdAt = session.updatedAtMs ?: System.currentTimeMillis()
+                        )
+                    }
+                    _allSessions.value = mapped
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.chatSessionKey.collect { key ->
+                    _currentSessionId.value = key
+                }
+            }
+            viewModelScope.launch {
+                var previousCount = 0
+                nodeRuntime.chatMessages.collect { messages ->
+                    val uiMessages = messages.map { it.toUiChatMessage() }
+                    _uiState.update { state ->
+                        state.copy(messages = uiMessages)
+                    }
+                    // Trigger TTS when a new assistant message arrives after user sent a message
+                    if (uiMessages.size > previousCount && pendingNodeChatTts) {
+                        val lastMessage = uiMessages.lastOrNull()
+                        if (lastMessage != null && !lastMessage.isUser) {
+                            pendingNodeChatTts = false
+                            stopThinkingSound()
+                            _uiState.update { it.copy(isThinking = false) }
+                            afterResponseReceived(lastMessage.text)
+                        }
+                    }
+                    previousCount = uiMessages.size
+                }
+            }
+            // Use pendingRunCount as the authoritative source for isThinking,
+            // but only while we are still waiting for a response (pendingNodeChatTts=true).
+            // Once the response message arrives (pendingNodeChatTts=false), do not
+            // re-set isThinking=true even if runId cleanup is delayed.
+            // NOTE: pendingNodeChatTts is intentionally NOT cleared here to avoid a race where
+            // count drops to 0 before the async chat.history fetch completes, which would
+            // prevent TTS from firing in chatMessages.collect.
+            viewModelScope.launch {
+                nodeRuntime.pendingRunCount.collect { count ->
+                    if (count == 0) {
+                        // Run finished: clear thinking state only.
+                        // pendingNodeChatTts is managed by chatMessages.collect.
+                        stopThinkingSound()
+                        _uiState.update { it.copy(isThinking = false) }
+                    } else if (pendingNodeChatTts) {
+                        // Still waiting for response: set thinking
+                        _uiState.update { it.copy(isThinking = true) }
+                    }
+                    // if count > 0 but pendingNodeChatTts=false: response already received,
+                    // do NOT flip isThinking back to true
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.chatError.collect { error ->
+                    if (!error.isNullOrBlank()) {
+                        stopThinkingSound()
+                    }
+                    _uiState.update { it.copy(error = error, isThinking = false) }
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.chatPendingToolCalls.collect { calls ->
+                    _uiState.update { state ->
+                        state.copy(
+                            pendingToolCalls = calls.map { call ->
+                                val args = call.args?.toString()?.take(80)?.let { " $it" } ?: ""
+                                "${call.name}$args"
+                            }
+                        )
+                    }
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.pendingGatewayTrust.collect { prompt ->
+                    _uiState.update { it.copy(pendingGatewayTrust = prompt) }
+                }
+            }
+            viewModelScope.launch {
+                nodeRuntime.displayName.collect { name ->
+                    _uiState.update { it.copy(displayName = name) }
+                }
+            }
+            viewModelScope.launch {
+                // If selectSessionOnStart was already called (from Intent), skip loadChat
+                // to avoid a second bootstrap() that would clear in-flight pendingRuns.
+                if (!sessionSelectedViaIntent) {
+                    val key = nodeRuntime.chatSessionKey.value
+                    nodeRuntime.loadChat(key)
+                }
+                nodeRuntime.refreshChatSessions()
+            }
+        } else {
+            // Local DB sessions/messages (existing behavior)
+            viewModelScope.launch {
+                chatRepository.allSessions.collect { sessions ->
+                    _allSessions.value = sessions
+                }
+            }
+            viewModelScope.launch {
+                _messagesFlow.collect { messages ->
+                    _uiState.update { it.copy(messages = messages) }
+                }
+            }
+            // Initial session setup (skip if already set via Intent)
+            viewModelScope.launch {
+                if (_currentSessionId.value != null) return@launch
+                val latest = chatRepository.getLatestSession()
+                if (latest != null) {
+                    _currentSessionId.value = latest.id
+                    settings.sessionId = latest.id
+                } else {
+                    createNewSession()
+                }
             }
         }
 
-        // Initial session setup
+        // Shared observation
         viewModelScope.launch {
-            // Check if there are sessions. If yes, pick latest.
-            val latest = chatRepository.getLatestSession()
-            if (latest != null) {
-                _currentSessionId.value = latest.id
-                settings.sessionId = latest.id
-            } else {
-                createNewSession()
+            if (useNodeChat) {
+                // Skip the initial disconnected state to avoid showing error on startup
+                nodeRuntime.isConnected.drop(1).collect { connected ->
+                    if (!connected) {
+                        _uiState.update { it.copy(error = "Node gateway offline") }
+                    } else {
+                        _uiState.update { it.copy(error = null) }
+                    }
+                }
             }
         }
 
-        // Observe pairing required state
+        // Observe agent list from NodeRuntime
         viewModelScope.launch {
-            gatewayClient.isPairingRequired.collect { required ->
-                _uiState.update { it.copy(isPairingRequired = required, deviceId = gatewayClient.deviceId) }
-            }
-        }
-
-        // Observe agent list from gateway (fetched via WS)
-        viewModelScope.launch {
-            gatewayClient.agentList.collect { agentListResult ->
-                _uiState.update { it.copy(
-                    availableAgents = agentListResult?.agents ?: emptyList()
-                )}
+            nodeRuntime.agentList.collect { agentListResult ->
+                val apiDefaultId = agentListResult?.defaultId
+                _uiState.update { state ->
+                    // If user hasn't overridden the default agent, resolve it from the API's defaultId
+                    val resolvedDefaultId = if (state.defaultAgentId == "main" && !apiDefaultId.isNullOrBlank()) {
+                        apiDefaultId
+                    } else {
+                        state.defaultAgentId
+                    }
+                    state.copy(
+                        availableAgents = agentListResult?.agents ?: emptyList(),
+                        defaultAgentId = resolvedDefaultId
+                    )
+                }
             }
         }
 
@@ -149,37 +279,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(defaultAgentId = savedAgentId, selectedAgentId = savedAgentId) }
         }
 
-        // Auto-connect to WebSocket if configured
-        connectGatewayIfNeeded()
-    }
-
-    fun connectGatewayIfNeeded() {
-        val baseUrl = settings.getBaseUrl()
-        if (baseUrl.isBlank()) return
-
-        try {
-            val url = java.net.URL(baseUrl)
-            val host = url.host
-            val useTls = url.protocol == "https"
-
-            // For tunneled connections (HTTPS, e.g. ngrok), use the URL's port (443 default).
-            // For direct LAN connections (HTTP), use gatewayPort setting or URL port.
-            val port = if (useTls) {
-                if (url.port > 0) url.port else 443
-            } else {
-                if (settings.gatewayPort > 0) settings.gatewayPort else
-                    if (url.port > 0) url.port else 18789
-            }
-            val token = settings.authToken.takeIf { it.isNotBlank() }
-
-            Log.d(TAG, "Connecting gateway: $host:$port, tls=$useTls")
-            gatewayClient.connect(host, port, token, useTls = useTls)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse webhook URL for WS: ${e.message}")
-        }
     }
 
     fun createNewSession() {
+        if (useNodeChat) {
+            val key = "chat-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(java.util.Date())}"
+            nodeRuntime.switchChatSession(key)
+            nodeRuntime.loadChat(key)
+            nodeRuntime.refreshChatSessions()
+            return
+        }
         viewModelScope.launch {
             val simpleDateFormat = java.text.SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
             val app = getApplication<Application>()
@@ -190,11 +299,53 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectSession(sessionId: String) {
-        _currentSessionId.value = sessionId
-        settings.sessionId = sessionId
+        if (useNodeChat) {
+            nodeRuntime.switchChatSession(sessionId)
+            nodeRuntime.loadChat(sessionId)
+        } else {
+            _currentSessionId.value = sessionId
+            settings.sessionId = sessionId
+        }
+    }
+
+    // Called from ChatActivity.onCreate when a specific session ID is provided via Intent.
+    // Must be called before the init coroutine runs (i.e., synchronously after ViewModel creation).
+    fun selectSessionOnStart(sessionId: String, initialTitle: String? = null) {
+        if (useNodeChat) {
+            sessionSelectedViaIntent = true
+            _currentSessionId.value = sessionId
+            if (!initialTitle.isNullOrBlank()) {
+                _initialSessionTitle.value = initialTitle
+            }
+            nodeRuntime.loadChat(sessionId)
+            // After bootstrap (chat.history), re-apply the session label.
+            // The gateway creates new sessions with the device name as default label,
+            // so we patch after the session actually exists on the gateway.
+            if (!initialTitle.isNullOrBlank()) {
+                val label = initialTitle
+                viewModelScope.launch {
+                    withTimeoutOrNull(10_000L) {
+                        nodeRuntime.chatSessions.first { sessions ->
+                            sessions.any { it.key == sessionId }
+                        }
+                    }
+                    nodeRuntime.patchChatSession(sessionId, label)
+                    nodeRuntime.refreshChatSessions()
+                }
+            }
+        } else {
+            _currentSessionId.value = sessionId
+            settings.sessionId = sessionId
+        }
     }
 
     fun deleteSession(sessionId: String) {
+        if (useNodeChat) {
+            _uiState.update {
+                it.copy(error = "Gateway session deletion is not supported yet. Please keep using session switch.")
+            }
+            return
+        }
         // Immediate UI update if deleting current session
         val isCurrent = _currentSessionId.value == sessionId
         if (isCurrent) {
@@ -229,6 +380,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         isTTSReady = true
     }
 
+    /**
+     * Called from ChatActivity.onResume() to refresh chat history in NodeChat mode.
+     * Only refreshes when not currently thinking (i.e., no in-flight request).
+     */
+    fun refreshChatIfNeeded() {
+        if (!useNodeChat) return
+        if (_uiState.value.isThinking) return
+        nodeRuntime.refreshChat()
+    }
+
+    fun acceptGatewayTrust() {
+        nodeRuntime.acceptGatewayTrustPrompt()
+    }
+
+    fun declineGatewayTrust() {
+        nodeRuntime.declineGatewayTrustPrompt()
+    }
+
     fun setAgent(agentId: String?) {
         _uiState.update { it.copy(selectedAgentId = agentId) }
     }
@@ -242,6 +411,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
+
+        if (useNodeChat) {
+            // Check gateway health before sending; if not ready, show a clear error
+            // instead of letting the message silently fail inside ChatController.
+            if (!nodeRuntime.chatHealthOk.value) {
+                _uiState.update { it.copy(error = "接続が確立されていません。しばらく待ってから再送信してください。") }
+                return
+            }
+            _uiState.update { it.copy(error = null) }
+            pendingNodeChatTts = true
+            if (lastInputWasVoice) {
+                toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
+            }
+            startThinkingSound()
+            viewModelScope.launch {
+                try {
+                    nodeRuntime.sendChat(
+                        message = text,
+                        thinking = "low",
+                        attachments = emptyList()
+                    )
+                } catch (e: Exception) {
+                    pendingNodeChatTts = false
+                    stopThinkingSound()
+                    _uiState.update { it.copy(isThinking = false, error = e.message) }
+                }
+            }
+            return
+        }
 
         // Ensure we have a session
         val sessionId = _currentSessionId.value ?: return
@@ -264,29 +462,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun sendViaHttp(sessionId: String, text: String) {
-        val result = apiClient.sendMessage(
-            webhookUrl = settings.getChatCompletionsUrl(),
-            message = text,
-            sessionId = sessionId,
-            authToken = settings.authToken.takeIf { it.isNotBlank() },
-            agentId = getEffectiveAgentId()
-        )
+    private fun sendViaHttp(sessionId: String, text: String) {
+        val httpUrl = settings.getChatCompletionsUrl()
+        val authToken = settings.authToken.takeIf { it.isNotBlank() }
+        val effectiveAgentId = getEffectiveAgentId()
 
-        result.fold(
-            onSuccess = { response ->
-                val responseText = response.getResponseText() ?: "No response"
-                chatRepository.addMessage(sessionId, responseText, isUser = false)
+        chatRepository.applicationScope.launch {
+            try {
+                val result = apiClient.sendMessage(
+                    httpUrl = httpUrl,
+                    message = text,
+                    sessionId = sessionId,
+                    authToken = authToken,
+                    agentId = effectiveAgentId
+                )
 
-                stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false) }
-                afterResponseReceived(responseText)
-            },
-            onFailure = { error ->
-                stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false, error = error.message) }
+                result.fold(
+                    onSuccess = { response ->
+                        val responseText = response.getResponseText() ?: "No response"
+                        chatRepository.addMessage(sessionId, responseText, isUser = false)
+
+                        viewModelScope.launch {
+                            stopThinkingSound()
+                            _uiState.update { it.copy(isThinking = false) }
+                            afterResponseReceived(responseText)
+                        }
+                    },
+                    onFailure = { error ->
+                        viewModelScope.launch {
+                            stopThinkingSound()
+                            _uiState.update { it.copy(isThinking = false, error = error.message) }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                viewModelScope.launch {
+                    stopThinkingSound()
+                    _uiState.update { it.copy(isThinking = false, error = e.message) }
+                }
             }
-        )
+        }
     }
 
     private fun afterResponseReceived(responseText: String) {
@@ -638,5 +853,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val intent = android.content.Intent("com.openclaw.assistant.ACTION_RESUME_HOTWORD")
         intent.setPackage(getApplication<Application>().packageName)
         getApplication<Application>().sendBroadcast(intent)
+    }
+
+    private fun com.openclaw.assistant.chat.ChatMessage.toUiChatMessage(): ChatMessage {
+        val mergedText = content.joinToString("\n") { it.text ?: "" }.trim().ifBlank { "(no text)" }
+        val isUserMessage = role.equals("user", ignoreCase = true)
+        return ChatMessage(
+            id = id,
+            text = mergedText,
+            isUser = isUserMessage,
+            timestamp = timestampMs ?: System.currentTimeMillis()
+        )
     }
 }
