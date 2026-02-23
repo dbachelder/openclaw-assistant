@@ -406,7 +406,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
     private suspend fun sendViaHttp(message: String) {
         val agentId = settings.defaultAgentId.takeIf { it.isNotBlank() && it != "main" }
         val result = apiClient.sendMessage(
-            webhookUrl = settings.getChatCompletionsUrl(),
+            httpUrl = settings.getChatCompletionsUrl(),
             message = message,
             sessionId = settings.sessionId,
             authToken = settings.authToken.takeIf { it.isNotBlank() },

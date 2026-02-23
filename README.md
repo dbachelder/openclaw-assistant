@@ -68,7 +68,7 @@ Download APK from [Releases](https://github.com/yuga-hashimoto/OpenClawAssistant
 1. Open the app
 2. Tap ⚙️ in the top right to open Settings
 3. Enter:
-   - **Webhook URL** (required): Your OpenClaw endpoint
+   - **Server URL** (required): Your OpenClaw endpoint
    - **Auth Token** (optional): Bearer authentication
 4. Tap **Test Connection** to verify
 
@@ -177,7 +177,7 @@ This section is for AI agents (like OpenClaw) that need to set up integration.
 
 ### Setup Instructions
 
-To configure OpenClaw for this Android app:
+To configure OpenClaw for this Android app, you need to set up an **HTTP connection** that supports the standard `/v1/chat/completions` API (OpenAI compatible).
 
 1. **Ensure Chat Completions API is enabled in `moltbot.json`:**
 ```json
@@ -200,6 +200,9 @@ ngrok http 18789
 3. **Provide to user:**
    - Server URL: `https://<ngrok-subdomain>.ngrok-free.dev/v1/chat/completions`
    - Auth Token: The gateway auth token (`gateway.auth.token` in `moltbot.json`)
+
+### Server URL Formatting
+- The app automatically appends `/v1/chat/completions` to your Server URL if not present.
 
 ### Request/Response Format
 
@@ -292,7 +295,7 @@ Authorization: Bearer <gateway-auth-token>
 1. アプリを開く
 2. 右上の⚙️から設定画面へ
 3. 以下を入力：
-   - **Webhook URL** (必須): OpenClawのエンドポイント
+   - **Server URL** (必須): OpenClawのエンドポイント
    - **Auth Token** (任意): Bearer認証用
 4. **接続テスト**をタップして確認
 

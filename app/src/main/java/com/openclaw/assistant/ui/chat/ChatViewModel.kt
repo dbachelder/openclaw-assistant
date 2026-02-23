@@ -11,7 +11,6 @@ import com.openclaw.assistant.OpenClawApplication
 import com.openclaw.assistant.api.OpenClawClient
 import com.openclaw.assistant.data.SettingsRepository
 import com.openclaw.assistant.gateway.AgentInfo
-import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.speech.SpeechRecognizerManager
 import com.openclaw.assistant.speech.SpeechResult
 import kotlinx.coroutines.Job
@@ -62,7 +61,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsRepository.getInstance(application)
     private val chatRepository = com.openclaw.assistant.data.repository.ChatRepository.getInstance(application)
     private val apiClient = OpenClawClient()
-    private val gatewayClient = GatewayClient.getInstance()
     private val nodeRuntime = (application as OpenClawApplication).nodeRuntime
     private val speechManager = SpeechRecognizerManager(application)
     private val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
@@ -160,11 +158,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // but only while we are still waiting for a response (pendingNodeChatTts=true).
             // Once the response message arrives (pendingNodeChatTts=false), do not
             // re-set isThinking=true even if runId cleanup is delayed.
+            // NOTE: pendingNodeChatTts is intentionally NOT cleared here to avoid a race where
+            // count drops to 0 before the async chat.history fetch completes, which would
+            // prevent TTS from firing in chatMessages.collect.
             viewModelScope.launch {
                 nodeRuntime.pendingRunCount.collect { count ->
                     if (count == 0) {
-                        // Run finished: clear thinking + pending flag
-                        pendingNodeChatTts = false
+                        // Run finished: clear thinking state only.
+                        // pendingNodeChatTts is managed by chatMessages.collect.
                         stopThinkingSound()
                         _uiState.update { it.copy(isThinking = false) }
                     } else if (pendingNodeChatTts) {
@@ -250,16 +251,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.update { it.copy(error = null) }
                     }
                 }
-            } else {
-                gatewayClient.isPairingRequired.collect { required ->
-                    _uiState.update { it.copy(isPairingRequired = required, deviceId = gatewayClient.deviceId) }
-                }
             }
         }
 
-        // Observe agent list from legacy gateway client (for old HTTP mode)
+        // Observe agent list from NodeRuntime
         viewModelScope.launch {
-            gatewayClient.agentList.collect { agentListResult ->
+            nodeRuntime.agentList.collect { agentListResult ->
                 _uiState.update { it.copy(
                     availableAgents = agentListResult?.agents ?: emptyList()
                 )}
@@ -272,36 +269,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(defaultAgentId = savedAgentId, selectedAgentId = savedAgentId) }
         }
 
-        if (!useNodeChat) {
-            // Auto-connect to WebSocket if configured
-            connectGatewayIfNeeded()
-        }
-    }
-
-    fun connectGatewayIfNeeded() {
-        val baseUrl = settings.getBaseUrl()
-        if (baseUrl.isBlank()) return
-
-        try {
-            val url = java.net.URL(baseUrl)
-            val host = url.host
-            val useTls = url.protocol == "https"
-
-            // For tunneled connections (HTTPS, e.g. ngrok), use the URL's port (443 default).
-            // For direct LAN connections (HTTP), use gatewayPort setting or URL port.
-            val port = if (useTls) {
-                if (url.port > 0) url.port else 443
-            } else {
-                if (settings.gatewayPort > 0) settings.gatewayPort else
-                    if (url.port > 0) url.port else 18789
-            }
-            val token = settings.authToken.takeIf { it.isNotBlank() }
-
-            Log.d(TAG, "Connecting gateway: $host:$port, tls=$useTls")
-            gatewayClient.connect(host, port, token, useTls = useTls)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse webhook URL for WS: ${e.message}")
-        }
     }
 
     fun createNewSession() {
@@ -472,7 +439,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun sendViaHttp(sessionId: String, text: String) {
         val result = apiClient.sendMessage(
-            webhookUrl = settings.getChatCompletionsUrl(),
+            httpUrl = settings.getChatCompletionsUrl(),
             message = text,
             sessionId = sessionId,
             authToken = settings.authToken.takeIf { it.isNotBlank() },

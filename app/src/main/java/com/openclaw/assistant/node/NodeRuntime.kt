@@ -17,6 +17,8 @@ import com.openclaw.assistant.chat.ChatSessionEntry
 import com.openclaw.assistant.chat.OutgoingAttachment
 import com.openclaw.assistant.chat.isCanonicalMainSessionKey
 import com.openclaw.assistant.chat.normalizeMainKey
+import com.openclaw.assistant.gateway.AgentInfo
+import com.openclaw.assistant.gateway.AgentListResult
 import com.openclaw.assistant.gateway.DeviceAuthStore
 import com.openclaw.assistant.gateway.DeviceIdentityStore
 import com.openclaw.assistant.gateway.GatewayDiscovery
@@ -191,6 +193,12 @@ class NodeRuntime(context: Context) {
   private val _isPairingRequired = MutableStateFlow(false)
   val isPairingRequired: StateFlow<Boolean> = _isPairingRequired.asStateFlow()
 
+  private val _missingScopeError = MutableStateFlow<String?>(null)
+  val missingScopeError: StateFlow<String?> = _missingScopeError.asStateFlow()
+
+  private val _agentList = MutableStateFlow<AgentListResult?>(null)
+  val agentList: StateFlow<AgentListResult?> = _agentList.asStateFlow()
+
   val deviceId: String?
     get() = identityStore.loadOrCreate().deviceId
 
@@ -219,6 +227,7 @@ class NodeRuntime(context: Context) {
         updateStatus()
         scope.launch { refreshBrandingFromGateway() }
         scope.launch { gatewayEventHandler.refreshWakeWordsFromGateway() }
+        scope.launch { fetchAgentList() }
       },
       onDisconnected = { message ->
         operatorConnected = false
@@ -480,6 +489,7 @@ class NodeRuntime(context: Context) {
 
   fun setCameraEnabled(value: Boolean) {
     prefs.setCameraEnabled(value)
+    if (value) refreshGatewayConnection() // Re-announce capabilities so gateway allows camera commands
   }
 
   fun setLocationMode(mode: LocationMode) {
@@ -539,6 +549,7 @@ class NodeRuntime(context: Context) {
 
   fun setSmsEnabled(value: Boolean) {
     prefs.setSmsEnabled(value)
+    if (value) refreshGatewayConnection() // Re-announce capabilities so gateway allows SMS commands
   }
 
   fun setScreenRecordActive(value: Boolean) {
@@ -769,6 +780,37 @@ class NodeRuntime(context: Context) {
     }
 
     chat.handleGatewayEvent(event, payloadJson)
+  }
+
+  private suspend fun fetchAgentList() {
+    if (!_isConnected.value) return
+    try {
+      val res = operatorSession.request("agents.list", "{}")
+      val root = res.let { Json.parseToJsonElement(it) } as? JsonObject ?: return
+      val defaultId = (root["defaultId"] as? JsonPrimitive)?.content ?: "main"
+      val agentsArray = root["agents"] as? JsonArray ?: run {
+        _agentList.value = AgentListResult(defaultId, emptyList())
+        return
+      }
+      val agents = agentsArray.mapNotNull { item ->
+        val obj = item as? JsonObject ?: return@mapNotNull null
+        val id = (obj["id"] as? JsonPrimitive)?.content ?: return@mapNotNull null
+        val name = (obj["name"] as? JsonPrimitive)?.content ?: id
+        AgentInfo(id = id, name = name)
+      }
+      _agentList.value = AgentListResult(defaultId = defaultId, agents = agents)
+      _missingScopeError.value = null
+    } catch (e: Throwable) {
+      val msg = e.message ?: ""
+      if (msg.contains("missing scope", ignoreCase = true)) {
+        _missingScopeError.value = msg
+      }
+    }
+  }
+
+  /** Refresh the available agent list from the gateway (fire-and-forget). */
+  fun refreshAgentList() {
+    scope.launch { fetchAgentList() }
   }
 
   private suspend fun refreshBrandingFromGateway() {

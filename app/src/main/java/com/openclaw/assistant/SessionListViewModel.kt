@@ -6,25 +6,28 @@ import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.data.local.entity.SessionEntity
 import com.openclaw.assistant.data.repository.ChatRepository
 import com.openclaw.assistant.data.SettingsRepository
-import com.openclaw.assistant.gateway.GatewayClient
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class SessionListViewModel(application: Application) : AndroidViewModel(application) {
 
     private val chatRepository = ChatRepository.getInstance(application)
     private val settingsRepository = SettingsRepository.getInstance(application)
-    private val gatewayClient = GatewayClient.getInstance(application)
-
-    private val _gatewaySessions = MutableStateFlow<List<SessionEntity>>(emptyList())
+    private val nodeRuntime = (application as OpenClawApplication).nodeRuntime
 
     val allSessions: StateFlow<List<SessionEntity>> = if (settingsRepository.useNodeChat) {
-        _gatewaySessions.asStateFlow()
+        nodeRuntime.chatSessions.map { entries ->
+            entries.map { entry ->
+                SessionEntity(
+                    id = entry.key,
+                    title = entry.displayName ?: "New Session",
+                    createdAt = entry.updatedAtMs ?: System.currentTimeMillis()
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     } else {
         chatRepository.allSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     }
@@ -35,18 +38,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
 
     fun refreshSessions() {
         if (settingsRepository.useNodeChat) {
-            viewModelScope.launch {
-                val sessions = gatewayClient.getSessions(limit = 100)
-                if (sessions != null) {
-                    _gatewaySessions.value = sessions.map { entry ->
-                        SessionEntity(
-                            id = entry.key,
-                            title = entry.displayName ?: "New Session",
-                            createdAt = entry.updatedAtMs ?: System.currentTimeMillis()
-                        )
-                    }
-                }
-            }
+            nodeRuntime.refreshChatSessions(limit = 100)
         }
     }
 
@@ -54,7 +46,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
         if (settingsRepository.useNodeChat) {
             val id = "chat-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}"
             viewModelScope.launch {
-                gatewayClient.patchSession(id, name.trim())
+                nodeRuntime.patchChatSession(id, name.trim())
                 onCreated(id)
             }
         } else {
@@ -68,9 +60,9 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
     fun deleteSession(sessionId: String) {
         if (settingsRepository.useNodeChat) {
             viewModelScope.launch {
-                val ok = gatewayClient.deleteSession(sessionId)
+                val ok = nodeRuntime.deleteChatSession(sessionId)
                 if (ok) {
-                    refreshSessions()
+                    nodeRuntime.refreshChatSessions()
                 }
             }
         } else {

@@ -2,7 +2,6 @@ package com.openclaw.assistant
 
 import android.app.Application
 import android.util.Log
-import com.openclaw.assistant.gateway.GatewayClient
 import java.security.Security
 
 class OpenClawApplication : Application() {
@@ -22,6 +21,5 @@ class OpenClawApplication : Application() {
         } catch (e: Throwable) {
             Log.e("OpenClawApp", "Failed to register Bouncy Castle provider", e)
         }
-        GatewayClient.getInstance(this)
     }
 }

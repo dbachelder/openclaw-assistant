@@ -36,7 +36,6 @@ import com.openclaw.assistant.ui.components.ConnectionState
 import com.openclaw.assistant.ui.components.PairingRequiredCard
 import com.openclaw.assistant.ui.components.StatusIndicator
 import com.openclaw.assistant.gateway.AgentInfo
-import com.openclaw.assistant.gateway.GatewayClient
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.openclaw.assistant.utils.SystemInfoProvider
@@ -74,7 +73,7 @@ fun SettingsScreen(
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
-    var webhookUrl by remember { mutableStateOf(settings.webhookUrl) }
+    var httpUrl by remember { mutableStateOf(settings.httpUrl) }
     var authToken by remember { mutableStateOf(settings.authToken) }
     var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
     var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
@@ -102,14 +101,13 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
-    // Agent list from gateway
-    val gatewayClient = remember { GatewayClient.getInstance() }
-    val isPairingRequired by gatewayClient.isPairingRequired.collectAsState()
-    val deviceId = gatewayClient.deviceId
+    // Agent list from NodeRuntime
+    val isPairingRequired by runtime.isPairingRequired.collectAsState()
+    val deviceId = runtime.deviceId
 
-    val agentListState by gatewayClient.agentList.collectAsState()
-    val availableAgents = remember(agentListState) { 
-        agentListState?.agents?.distinctBy { it.id } ?: emptyList() 
+    val agentListState by runtime.agentList.collectAsState()
+    val availableAgents = remember(agentListState) {
+        agentListState?.agents?.distinctBy { it.id } ?: emptyList()
     }
     var isFetchingAgents by remember { mutableStateOf(false) }
     var showAgentMenu by remember { mutableStateOf(false) }
@@ -140,7 +138,7 @@ fun SettingsScreen(
     var gatewayToken by remember { mutableStateOf(gatewayTokenState) }
     
     // HTTP inputs
-    var httpUrl by remember { mutableStateOf(webhookUrl) }
+    var httpInputUrl by remember { mutableStateOf(httpUrl) }
     var httpToken by remember { mutableStateOf(authToken) }
     
     // Update local state if runtime state changes behind the scenes
@@ -150,8 +148,8 @@ fun SettingsScreen(
         gatewayTls = manualTlsState
         gatewayToken = gatewayTokenState
     }
-    LaunchedEffect(webhookUrl, authToken) {
-        httpUrl = webhookUrl
+    LaunchedEffect(httpUrl, authToken) {
+        httpInputUrl = httpUrl
         httpToken = authToken
     }
 
@@ -159,21 +157,11 @@ fun SettingsScreen(
         availableEngines = com.openclaw.assistant.speech.TTSEngineUtils.getAvailableEngines(context)
     }
 
-    // Reactively observe agent list from gateway (updates after connection test)
+    // Fetch agent list on screen open if already connected
     LaunchedEffect(Unit) {
-        Log.e("SettingsActivity", "LaunchedEffect: Checking connection to fetch agents...")
-        if (gatewayClient.isConnected()) {
-            Log.e("SettingsActivity", "Already connected, fetching agent list...")
-            try {
-                gatewayClient.getAgentList()
-            } catch (e: Exception) {
-                Log.e("SettingsActivity", "Failed to auto-fetch agents: ${e.message}")
-            }
+        if (runtime.isConnected.value) {
+            runtime.refreshAgentList()
         }
-    }
-    
-    LaunchedEffect(availableAgents) {
-        Log.e("SettingsActivity", "Available agents updated: ${availableAgents.size} agents. IDs: ${availableAgents.map { it.id }}")
     }
 
     // Speech recognition language options - loaded dynamically from device
@@ -227,7 +215,7 @@ fun SettingsScreen(
                             runtime.setGatewayToken(gatewayToken.trim())
 
                             // Save HTTP Settings
-                            settings.webhookUrl = httpUrl.trim()
+                            settings.httpUrl = httpInputUrl.trim()
                             settings.authToken = httpToken.trim()
                             
                             settings.defaultAgentId = defaultAgentId
@@ -255,7 +243,7 @@ fun SettingsScreen(
                             }
                             onSave()
                         },
-                        enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpUrl.isNotBlank())
+                        enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpInputUrl.isNotBlank())
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -378,8 +366,8 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             
                             OutlinedTextField(
-                                value = httpUrl,
-                                onValueChange = { httpUrl = it; testResult = null },
+                                value = httpInputUrl,
+                                onValueChange = { httpInputUrl = it; testResult = null },
                                 label = { Text(stringResource(R.string.webhook_url_label)) },
                                 placeholder = { Text(stringResource(R.string.webhook_url_hint)) },
                                 leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
@@ -467,12 +455,8 @@ fun SettingsScreen(
                                                 IconButton(onClick = {
                                                     scope.launch {
                                                         isFetchingAgents = true
-                                                        if (gatewayClient.isConnected()) {
-                                                            try {
-                                                                gatewayClient.getAgentList()
-                                                            } catch (e: Exception) {
-                                                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                            }
+                                                        if (runtime.isConnected.value) {
+                                                            runtime.refreshAgentList()
                                                         } else {
                                                             Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                         }
@@ -522,12 +506,8 @@ fun SettingsScreen(
                                         IconButton(onClick = {
                                             scope.launch {
                                                 isFetchingAgents = true
-                                                if (gatewayClient.isConnected()) {
-                                                    try {
-                                                        gatewayClient.getAgentList()
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                    }
+                                                if (runtime.isConnected.value) {
+                                                    runtime.refreshAgentList()
                                                 } else {
                                                     Toast.makeText(context, context.getString(R.string.gateway_not_connected), Toast.LENGTH_SHORT).show()
                                                 }
@@ -542,7 +522,71 @@ fun SettingsScreen(
                                 singleLine = true
                             )
                         }
-                    } 
+                    }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Test Connection Button
+                            Button(
+                                onClick = {
+                                    if (httpUrl.isBlank()) return@Button
+                                    scope.launch {
+                                        try {
+                                            isTesting = true
+                                            testResult = null
+                                            val testUrl = httpInputUrl.trimEnd('/').let { url ->
+                                                if (url.contains("/v1/")) url else "$url/v1/chat/completions"
+                                            }
+                                            val result = apiClient.testConnection(testUrl, httpToken.trim())
+                                            result.fold(
+                                                onSuccess = {
+                                                    testResult = TestResult(success = true, message = context.getString(R.string.connected))
+                                                    settings.httpUrl = httpInputUrl.trim()
+                                                    settings.authToken = httpToken.trim()
+                                                    settings.isVerified = true
+                                                },
+                                                onFailure = {
+                                                    testResult = TestResult(success = false, message = context.getString(R.string.failed, it.message ?: ""))
+                                                }
+                                            )
+                                        } catch (e: Exception) {
+                                            testResult = TestResult(success = false, message = context.getString(R.string.error, e.message ?: ""))
+                                        } finally {
+                                            isTesting = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = when {
+                                        testResult?.success == true -> Color(0xFF4CAF50)
+                                        testResult?.success == false -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                ),
+                                enabled = httpInputUrl.isNotBlank() && !isTesting
+                            ) {
+                                if (isTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.testing))
+                                } else {
+                                    Icon(
+                                        when {
+                                            testResult?.success == true -> Icons.Default.Check
+                                            testResult?.success == false -> Icons.Default.Error
+                                            else -> Icons.Default.NetworkCheck
+                                        },
+                                        contentDescription = null
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(testResult?.message ?: stringResource(R.string.test_connection_button))
+                                }
+                            }
                 }
                         Spacer(modifier = Modifier.height(24.dp))
                     } // end Column
@@ -565,7 +609,7 @@ fun SettingsScreen(
                         Text("チャット送受信方式", style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Gateway Chat: Gatewayを介してチャット (会話履歴・セッション管理込み)\nHTTP Chat: Webhook URL経由で直接AIへリクエスト",
+                            "Gateway Chat: Gatewayを介してチャット (会話履歴・セッション管理込み)\nHTTP Chat: HTTP接続経由で直接AIへリクエスト",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
                         )

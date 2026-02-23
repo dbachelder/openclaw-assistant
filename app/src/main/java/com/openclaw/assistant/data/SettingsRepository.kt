@@ -23,12 +23,12 @@ class SettingsRepository(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    // Webhook URL (required)
-    var webhookUrl: String
-        get() = prefs.getString(KEY_WEBHOOK_URL, "") ?: ""
+    // HTTP Server URL (required)
+    var httpUrl: String
+        get() = prefs.getString(KEY_HTTP_URL, "") ?: ""
         set(value) {
-            if (value != webhookUrl) {
-                prefs.edit().putString(KEY_WEBHOOK_URL, value).apply()
+            if (value != httpUrl) {
+                prefs.edit().putString(KEY_HTTP_URL, value).apply()
                 isVerified = false
             }
         }
@@ -161,7 +161,7 @@ class SettingsRepository(context: Context) {
      * Supports both base URL (http://server) and full path (http://server/v1/chat/completions).
      */
     fun getChatCompletionsUrl(): String {
-        val url = webhookUrl.trim().trimEnd('/')
+        val url = httpUrl.trim().trimEnd('/')
         if (url.isBlank()) return ""
         return if (url.contains("/v1/")) url
         else "$url/v1/chat/completions"
@@ -172,14 +172,14 @@ class SettingsRepository(context: Context) {
      * Extracts base from full path URLs, or returns as-is for base URLs.
      */
     fun getBaseUrl(): String {
-        val url = webhookUrl.trimEnd('/')
+        val url = httpUrl.trimEnd('/')
         val idx = url.indexOf("/v1/")
         return if (idx > 0) url.substring(0, idx) else url
     }
 
     // Check if configured
     fun isConfigured(): Boolean {
-        return webhookUrl.isNotBlank() && isVerified
+        return httpUrl.isNotBlank() && isVerified
     }
 
     // Generate new session ID
@@ -194,7 +194,7 @@ class SettingsRepository(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "openclaw_secure_prefs"
-        private const val KEY_WEBHOOK_URL = "webhook_url"
+        private const val KEY_HTTP_URL = "webhook_url"
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_HOTWORD_ENABLED = "hotword_enabled"

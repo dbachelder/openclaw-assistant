@@ -31,7 +31,7 @@
     <string name="thinking">考え中…</string>
     <string name="speaking">読み上げ中…</string>
     <string name="ready">準備完了</string>
-    <string name="error_no_webhook">Webhook URLを設定してください</string>
+    <string name="error_no_webhook">HTTP接続を設定してください</string>
     <string name="error_network">ネットワークエラー</string>
     <string name="error_speech">音声認識エラー</string>
     
@@ -51,6 +51,7 @@
     <string name="could_not_open_settings">設定を開けませんでした</string>
     <string name="hotword_started">ウェイクワード検知を開始しました</string>
     <string name="hotword_stopped">ウェイクワード検知を停止しました</string>
+    <string name="wakeword_requires_connection_error">ウェイクワードを有効にする前に、設定でHTTP接続を設定してください。</string>
     <string name="saved">保存しました</string>
     
     <!-- How to Use -->
@@ -226,7 +227,7 @@
     <string name="gateway_use_node_chat_desc">Gateway経由でチャットを行う</string>
 
     <!-- Legacy Settings -->
-    <string name="settings_legacy_title">レガシー接続 (Webhook)</string>
+    <string name="settings_legacy_title">HTTP接続</string>
     <string name="settings_legacy_desc">Gatewayを使用せずLLM APIに直接接続</string>
 
     <!-- Missing translations (EN strings not previously in JA) -->
@@ -238,7 +239,7 @@
     <string name="state_error">エラー</string>
     <string name="action_try_again">再試行</string>
     <string name="config_required">設定が必要です</string>
-    <string name="error_config_required">Webhook URLを設定してください</string>
+    <string name="error_config_required">HTTP接続を設定してください</string>
     <string name="error_speech_general">音声エラー</string>
     <string name="error_speech_audio">音声入力エラー</string>
     <string name="error_speech_client">クライアントエラー</string>

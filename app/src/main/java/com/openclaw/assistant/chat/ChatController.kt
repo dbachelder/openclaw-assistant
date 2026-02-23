@@ -327,21 +327,26 @@ class ChatController(
     if (!sessionKey.isNullOrEmpty() && sessionKey != _sessionKey.value) return
 
     val runId = payload["runId"].asStringOrNull()
+    val state = payload["state"].asStringOrNull()
     if (runId != null) {
       val isPending =
         synchronized(pendingRuns) {
           pendingRuns.contains(runId)
         }
-      if (!isPending) return
+      // For terminal states, allow through even if runId is unknown (e.g. server-assigned runId
+      // that differs from the client-generated idempotencyKey). Non-terminal states still require
+      // the runId to be tracked to avoid processing stale streaming updates.
+      if (!isPending && state != "final" && state != "aborted" && state != "error") return
     }
 
-    val state = payload["state"].asStringOrNull()
     when (state) {
       "final", "aborted", "error" -> {
         if (state == "error") {
           _errorText.value = payload["errorMessage"].asStringOrNull() ?: "Chat failed"
         }
-        if (runId != null) clearPendingRun(runId) else clearPendingRuns()
+        // Clear the specific pending run if known, otherwise clear all pending runs.
+        val knownPending = runId != null && synchronized(pendingRuns) { pendingRuns.contains(runId) }
+        if (knownPending && runId != null) clearPendingRun(runId) else clearPendingRuns()
         pendingToolCallsById.clear()
         publishPendingToolCalls()
         _streamingAssistantText.value = null

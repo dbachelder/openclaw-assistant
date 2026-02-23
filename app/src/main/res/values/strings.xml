@@ -7,7 +7,7 @@
     <string name="notification_content">Say \"%s\" to activate</string>
     <string name="default_session_title_format">Voice Session %s</string>
     <string name="chat_session_title_format">Chat %s</string>
-    <string name="error_config_required">Please configure Webhook URL</string>
+    <string name="error_config_required">Please configure HTTP connection</string>
     <string name="config_required">Configuration required</string>
     <string name="state_listening">Listening...</string>
     <string name="state_processing">Processing...</string>
@@ -55,7 +55,7 @@
     <string name="thinking">Thinking…</string>
     <string name="speaking">Speaking…</string>
     <string name="ready">Ready</string>
-    <string name="error_no_webhook">Please configure Webhook URL</string>
+    <string name="error_no_webhook">Please configure HTTP connection</string>
 
     <string name="error_speech">Speech recognition error</string>
     
@@ -75,6 +75,7 @@
     <string name="could_not_open_settings">Could not open settings</string>
     <string name="hotword_started">Wake Word detection started</string>
     <string name="hotword_stopped">Wake Word detection stopped</string>
+    <string name="wakeword_requires_connection_error">Please configure a HTTP connection in Settings before enabling Wake Word.</string>
     <string name="saved">Saved</string>
     
     <!-- How to Use -->
@@ -272,8 +273,8 @@
     <string name="gateway_use_node_chat_desc">Route chat via gateway</string>
 
     <!-- Legacy Settings -->
-    <string name="settings_legacy_title">Legacy Connection (Webhook)</string>
-    <string name="settings_legacy_desc">Direct connection to LLM API without Gateway</string>
+    <string name="settings_legacy_title">HTTP Connection</string>
+    <string name="settings_legacy_desc">Direct connection via HTTP</string>
 
     <!-- Capability Cards (SMS & Screen) -->
     <string name="capability_sms">SMS</string>

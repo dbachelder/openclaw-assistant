@@ -28,10 +28,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SmartToy
@@ -148,9 +145,6 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         }
                     },
                     onBack = { finish() },
-                    onSelectSession = { viewModel.selectSession(it) },
-                    onCreateSession = { viewModel.createNewSession() },
-                    onDeleteSession = { viewModel.deleteSession(it) },
                     onAgentSelected = { viewModel.setAgent(it) },
                     onAcceptGatewayTrust = { viewModel.acceptGatewayTrust() },
                     onDeclineGatewayTrust = { viewModel.declineGatewayTrust() }
@@ -269,9 +263,6 @@ fun ChatScreen(
     onStopSpeaking: () -> Unit,
     onInterruptAndListen: () -> Unit,
     onBack: () -> Unit,
-    onSelectSession: (String) -> Unit,
-    onCreateSession: () -> Unit,
-    onDeleteSession: (String) -> Unit,
     onAgentSelected: (String?) -> Unit = {},
     onAcceptGatewayTrust: () -> Unit = {},
     onDeclineGatewayTrust: () -> Unit = {}
@@ -279,8 +270,6 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
 
     // Group messages by date
     val groupedItems = remember(uiState.messages) {
@@ -322,71 +311,7 @@ fun ChatScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = stringResource(R.string.conversations_title),
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                HorizontalDivider()
-
-                NavigationDrawerItem(
-                    label = { Text(stringResource(R.string.new_chat)) },
-                    selected = false,
-                    onClick = {
-                        onCreateSession()
-                        scope.launch { drawerState.close() }
-                    },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                    icon = { Icon(Icons.Default.Add, null) }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                LazyColumn {
-                    items(allSessions) { session ->
-                        val isSelected = session.id == currentSessionId
-                        NavigationDrawerItem(
-                            label = {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = session.title,
-                                        maxLines = 1,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = { onDeleteSession(session.id) },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = stringResource(R.string.delete),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            },
-                            selected = isSelected,
-                            onClick = {
-                                onSelectSession(session.id)
-                                scope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                        )
-                    }
-                }
-            }
-        }
-    ) {
-        Scaffold(
+    Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
@@ -415,11 +340,6 @@ fun ChatScreen(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu))
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -541,7 +461,6 @@ fun ChatScreen(
                 }
             }
         }
-    }
 }
 
 @Composable

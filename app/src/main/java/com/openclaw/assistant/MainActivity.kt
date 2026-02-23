@@ -47,7 +47,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import com.openclaw.assistant.gateway.GatewayClient
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
@@ -99,11 +98,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
         val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
         val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val smsGranted = permissions[Manifest.permission.SEND_SMS] ?: false
 
         // Auto-enable capabilities when permission is newly granted
         val runtime = (applicationContext as OpenClawApplication).nodeRuntime
         if (cameraGranted) {
             runtime.setCameraEnabled(true)
+        }
+        if (smsGranted) {
+            runtime.setSmsEnabled(true)
         }
         if (coarseGranted) {
             runtime.setLocationMode(com.openclaw.assistant.LocationMode.WhileUsing)
@@ -250,6 +253,19 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     fun toggleHotwordService(enabled: Boolean) {
         if (enabled) {
+            // Check that a backend connection is configured before enabling wakeword.
+            // The voice interaction session requires gateway or HTTP to communicate with the AI.
+            val runtime = (applicationContext as OpenClawApplication).nodeRuntime
+            val isConnectionConfigured = if (settings.connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                runtime.manualHost.value.isNotBlank()
+            } else {
+                settings.httpUrl.isNotBlank()
+            }
+            if (!isConnectionConfigured) {
+                Toast.makeText(this, getString(R.string.wakeword_requires_connection_error), Toast.LENGTH_LONG).show()
+                return
+            }
+
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
                 settings.hotwordEnabled = true
@@ -363,40 +379,14 @@ fun MainScreen(
         runtime.clearCapabilityError()
     }
     // Permission error observation
-    val gatewayClient = remember { GatewayClient.getInstance() }
-    val missingScopeError by gatewayClient.missingScopeError.collectAsState()
+    val missingScopeError by runtime.missingScopeError.collectAsState()
     val isPairingRequired by runtime.isPairingRequired.collectAsState()
     val isOperatorOffline by runtime.isOperatorOffline.collectAsState()
-    val deviceId = gatewayClient.deviceId
-    val nodeDeviceId = runtime.deviceId
+    val deviceId = runtime.deviceId
     val displayName by runtime.displayName.collectAsState()
     val pendingGatewayTrust by runtime.pendingGatewayTrust.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    // Auto-connect WS on launch for agent list and pairing detection
-    LaunchedEffect(Unit) {
-        if (settings.isConfigured()) {
-             val baseUrl = settings.getBaseUrl()
-             if (baseUrl.isNotBlank()) {
-                 try {
-                     val url = java.net.URL(baseUrl)
-                     val host = url.host
-                     val useTls = url.protocol == "https"
-                     val port = if (useTls) {
-                         if (url.port > 0) url.port else 443
-                     } else {
-                         if (settings.gatewayPort > 0) settings.gatewayPort else
-                             if (url.port > 0) url.port else 18789
-                     }
-                     val token = settings.authToken.takeIf { it.isNotBlank() }
-                     gatewayClient.connect(host, port, token, useTls = useTls)
-                 } catch (e: Exception) {
-                     // Ignore parse errors here
-                 }
-             }
-        }
-    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -457,8 +447,8 @@ fun MainScreen(
             }
 
             // Show operator offline warning (node connected but operator not authorized)
-            if (isOperatorOffline && nodeDeviceId != null) {
-                OperatorOfflineCard(deviceId = nodeDeviceId, displayName = displayName)
+            if (isOperatorOffline && deviceId != null) {
+                OperatorOfflineCard(deviceId = deviceId, displayName = displayName)
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
@@ -579,9 +569,15 @@ fun MainScreen(
                                 if (smsEnabled) {
                                     runtime.setSmsEnabled(false)
                                 } else {
-                                    onRequestPermissions(listOf(Manifest.permission.SEND_SMS))
-                                    runtime.setSmsEnabled(true)
-                                    // else: permission requested, result handled in permissionLauncher
+                                    val granted = ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.SEND_SMS
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (granted) {
+                                        runtime.setSmsEnabled(true)
+                                    } else {
+                                        onRequestPermissions(listOf(Manifest.permission.SEND_SMS))
+                                        // setSmsEnabled(true) is called from permissionLauncher on grant
+                                    }
                                 }
                             },
                             modifier = Modifier.weight(1f)

@@ -22,13 +22,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openclaw.assistant.OpenClawApplication
 import com.openclaw.assistant.R
-import com.openclaw.assistant.gateway.GatewayClient
 
 @Composable
 fun PairingRequiredCard(deviceId: String, displayName: String = "") {
     val context = LocalContext.current
-    val gatewayClient = remember { GatewayClient.getInstance(context) }
+    val nodeRuntime = remember { (context.applicationContext as OpenClawApplication).nodeRuntime }
     val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
 
     // Command generation — match any field value against known identifiers (name or device ID hash).
@@ -116,7 +116,7 @@ fun PairingRequiredCard(deviceId: String, displayName: String = "") {
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
-                onClick = { gatewayClient.reconnect() },
+                onClick = { nodeRuntime.refreshGatewayConnection() },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
