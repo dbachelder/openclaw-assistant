@@ -990,7 +990,8 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = {
-                            val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings)
+                            val openClawVersion = runtime.serverVersion.value
+                            val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings, openClawVersion)
                             val body = "\n\n$systemInfo"
                             val uri = Uri.parse("https://github.com/yuga-hashimoto/openclaw-assistant/issues/new")
                                 .buildUpon()
