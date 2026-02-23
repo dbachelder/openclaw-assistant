@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -229,7 +230,7 @@ fun ChatScreen(
     onDeleteSession: (String) -> Unit,
     onAgentSelected: (String?) -> Unit = {}
 ) {
-    var inputText by remember { mutableStateOf(initialText) }
+    var inputText by rememberSaveable { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -594,7 +595,7 @@ fun AgentSelector(
     defaultAgentId: String = "main",
     onAgentSelected: (String?) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val effectiveId = selectedAgentId ?: defaultAgentId
     val selectedAgent = agents.find { it.id == effectiveId }
     
