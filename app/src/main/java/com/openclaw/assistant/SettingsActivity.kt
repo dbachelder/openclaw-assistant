@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -73,22 +74,22 @@ fun SettingsScreen(
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
-    var httpUrl by remember { mutableStateOf(settings.httpUrl) }
-    var authToken by remember { mutableStateOf(settings.authToken) }
-    var defaultAgentId by remember { mutableStateOf(settings.defaultAgentId) }
-    var ttsEnabled by remember { mutableStateOf(settings.ttsEnabled) }
-    var ttsSpeed by remember { mutableStateOf(settings.ttsSpeed) }
-    var continuousMode by remember { mutableStateOf(settings.continuousMode) }
-    var resumeLatestSession by remember { mutableStateOf(settings.resumeLatestSession) }
-    var wakeWordPreset by remember { mutableStateOf(settings.wakeWordPreset) }
-    var customWakeWord by remember { mutableStateOf(settings.customWakeWord) }
-    var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
-    var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
-    var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
+    var httpUrl by rememberSaveable { mutableStateOf(settings.httpUrl) }
+    var authToken by rememberSaveable { mutableStateOf(settings.authToken) }
+    var defaultAgentId by rememberSaveable { mutableStateOf(settings.defaultAgentId) }
+    var ttsEnabled by rememberSaveable { mutableStateOf(settings.ttsEnabled) }
+    var ttsSpeed by rememberSaveable { mutableStateOf(settings.ttsSpeed) }
+    var continuousMode by rememberSaveable { mutableStateOf(settings.continuousMode) }
+    var resumeLatestSession by rememberSaveable { mutableStateOf(settings.resumeLatestSession) }
+    var wakeWordPreset by rememberSaveable { mutableStateOf(settings.wakeWordPreset) }
+    var customWakeWord by rememberSaveable { mutableStateOf(settings.customWakeWord) }
+    var speechSilenceTimeout by rememberSaveable { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
+    var speechLanguage by rememberSaveable { mutableStateOf(settings.speechLanguage) }
+    var thinkingSoundEnabled by rememberSaveable { mutableStateOf(settings.thinkingSoundEnabled) }
 
-
-    var showWakeWordMenu by remember { mutableStateOf(false) }
-    var showLanguageMenu by remember { mutableStateOf(false) }
+    var showAuthToken by rememberSaveable { mutableStateOf(false) }
+    var showWakeWordMenu by rememberSaveable { mutableStateOf(false) }
+    var showLanguageMenu by rememberSaveable { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -97,7 +98,7 @@ fun SettingsScreen(
     }
     val apiClient = remember { OpenClawClient() }
     
-    var isTesting by remember { mutableStateOf(false) }
+    var isTesting by rememberSaveable { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
 
     // Agent list from NodeRuntime
@@ -108,14 +109,14 @@ fun SettingsScreen(
     val availableAgents = remember(agentListState) {
         agentListState?.agents?.distinctBy { it.id } ?: emptyList()
     }
-    var isFetchingAgents by remember { mutableStateOf(false) }
-    var showAgentMenu by remember { mutableStateOf(false) }
+    var isFetchingAgents by rememberSaveable { mutableStateOf(false) }
+    var showAgentMenu by rememberSaveable { mutableStateOf(false) }
 
     // TTS Engines
-    var ttsEngine by remember { mutableStateOf(settings.ttsEngine) }
+    var ttsEngine by rememberSaveable { mutableStateOf(settings.ttsEngine) }
     var availableEngines by remember { mutableStateOf<List<com.openclaw.assistant.speech.TTSEngineUtils.EngineInfo>>(emptyList()) }
-    var showEngineMenu by remember { mutableStateOf(false) }
-    var showNodeToken by remember { mutableStateOf(false) }
+    var showEngineMenu by rememberSaveable { mutableStateOf(false) }
+    var showNodeToken by rememberSaveable { mutableStateOf(false) }
 
     val nodeConnected by runtime.isConnected.collectAsState()
     val nodeStatus by runtime.statusText.collectAsState()
@@ -126,20 +127,20 @@ fun SettingsScreen(
     val manualPortState by runtime.manualPort.collectAsState()
     val manualTlsState by runtime.manualTls.collectAsState()
     val gatewayTokenState by runtime.gatewayToken.collectAsState()
-    
+
     // Connection Type
-    var connectionType by remember { mutableStateOf(settings.connectionType) }
-    
+    var connectionType by rememberSaveable { mutableStateOf(settings.connectionType) }
+
     // Gateway inputs
-    var gatewayHost by remember { mutableStateOf(manualHostState) }
-    var gatewayPort by remember { mutableStateOf(manualPortState.toString()) }
-    var gatewayTls by remember { mutableStateOf(manualTlsState) }
-    var gatewayToken by remember { mutableStateOf(gatewayTokenState) }
-    
+    var gatewayHost by rememberSaveable { mutableStateOf(manualHostState) }
+    var gatewayPort by rememberSaveable { mutableStateOf(manualPortState.toString()) }
+    var gatewayTls by rememberSaveable { mutableStateOf(manualTlsState) }
+    var gatewayToken by rememberSaveable { mutableStateOf(gatewayTokenState) }
+
     // HTTP inputs
-    var httpInputUrl by remember { mutableStateOf(httpUrl) }
-    var httpToken by remember { mutableStateOf(authToken) }
-    
+    var httpInputUrl by rememberSaveable { mutableStateOf(httpUrl) }
+    var httpToken by rememberSaveable { mutableStateOf(authToken) }
+
     // Update local state if runtime state changes behind the scenes
     LaunchedEffect(manualHostState, manualPortState, manualTlsState, gatewayTokenState) {
         gatewayHost = manualHostState

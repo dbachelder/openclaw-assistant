@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.StopScreenShare
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -364,9 +365,9 @@ fun MainScreen(
     var isAssistantSet by remember { mutableStateOf((context as? MainActivity)?.isAssistantActive() ?: false) }
     val nodeConnected by runtime.isConnected.collectAsState()
     val nodeStatusText by runtime.statusText.collectAsState()
-    var showTroubleshooting by remember { mutableStateOf(false) }
-    var showHowToUse by remember { mutableStateOf(false) }
-    var showLocationInfo by remember { mutableStateOf(false) }
+    var showTroubleshooting by rememberSaveable { mutableStateOf(false) }
+    var showHowToUse by rememberSaveable { mutableStateOf(false) }
+    var showLocationInfo by rememberSaveable { mutableStateOf(false) }
     
     var showScreenCaptureDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -997,7 +998,7 @@ fun CompactActionCard(modifier: Modifier = Modifier, icon: ImageVector, title: S
 
 @Composable
 fun MissingScopeCard(error: String, onClick: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
 
     Card(
