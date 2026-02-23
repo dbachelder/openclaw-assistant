@@ -165,6 +165,9 @@
     <string name="delete">Delete</string>
     <string name="menu">Menu</string>
     <string name="back">Back</string>
+    <string name="select_chat_type">Select Chat Type</string>
+    <string name="chat_type_gateway">Gateway Chat</string>
+    <string name="chat_type_http">HTTP Chat</string>
 
     <!-- Session List -->
     <string name="no_sessions">No conversations yet. Tap + to start a new one.</string>

@@ -9,7 +9,8 @@ import java.util.UUID
 
 class ChatRepository private constructor(context: Context) {
     private val chatDao = AppDatabase.getDatabase(context).chatDao()
-
+    val applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    
     // Singleton
     companion object {
         @Volatile
@@ -24,6 +25,7 @@ class ChatRepository private constructor(context: Context) {
 
     // Sessions
     val allSessions: Flow<List<SessionEntity>> = chatDao.getAllSessions()
+    val allSessionsWithLatestTime: Flow<List<com.openclaw.assistant.data.local.dao.SessionWithLatestMessageTime>> = chatDao.getAllSessionsWithLatestMessageTime()
 
     suspend fun createSession(title: String = "New Conversation"): String {
         val id = UUID.randomUUID().toString()

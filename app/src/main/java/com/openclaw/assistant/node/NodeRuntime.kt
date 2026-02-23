@@ -287,7 +287,7 @@ class NodeRuntime(context: Context) {
       scope = scope,
       session = operatorSession,
       json = json,
-      supportsChatSubscribe = false,
+      supportsChatSubscribe = true,
     )
 
   private fun applyMainSessionKey(candidate: String?) {
@@ -752,9 +752,13 @@ class NodeRuntime(context: Context) {
   suspend fun deleteChatSession(key: String): Boolean {
     return try {
       val params = buildJsonObject { put("key", JsonPrimitive(key)) }
-      operatorSession.request("sessions.delete", params.toString())
+      val result = operatorSession.request("sessions.delete", params.toString())
+      android.util.Log.d("NodeRuntime", "deleteChatSession result for key $key: $result")
       true
-    } catch (_: Throwable) { false }
+    } catch (e: Throwable) { 
+      android.util.Log.e("NodeRuntime", "deleteChatSession error for key $key", e)
+      false 
+    }
   }
 
   fun setChatThinkingLevel(level: String) {

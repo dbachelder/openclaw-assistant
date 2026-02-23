@@ -85,7 +85,6 @@ fun SettingsScreen(
     var speechSilenceTimeout by remember { mutableStateOf(settings.speechSilenceTimeout.toFloat().coerceIn(5000f, 30000f)) }
     var speechLanguage by remember { mutableStateOf(settings.speechLanguage) }
     var thinkingSoundEnabled by remember { mutableStateOf(settings.thinkingSoundEnabled) }
-    var useNodeChat by remember { mutableStateOf(settings.useNodeChat) }
 
 
     var showWakeWordMenu by remember { mutableStateOf(false) }
@@ -193,6 +192,10 @@ fun SettingsScreen(
         SettingsRepository.WAKE_WORD_CUSTOM to stringResource(R.string.wake_word_custom)
     )
 
+    var selectedTabIndex by remember {
+        mutableStateOf(if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) 0 else 1)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -205,8 +208,12 @@ fun SettingsScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            settings.connectionType = connectionType
-                            
+                            settings.connectionType = if (selectedTabIndex == 0) {
+                                SettingsRepository.CONNECTION_TYPE_GATEWAY
+                            } else {
+                                SettingsRepository.CONNECTION_TYPE_HTTP
+                            }
+
                             // Save Gateway Settings
                             runtime.setManualEnabled(true)
                             runtime.setManualHost(gatewayHost.trim())
@@ -217,7 +224,7 @@ fun SettingsScreen(
                             // Save HTTP Settings
                             settings.httpUrl = httpInputUrl.trim()
                             settings.authToken = httpToken.trim()
-                            
+
                             settings.defaultAgentId = defaultAgentId
                             settings.ttsEnabled = ttsEnabled
                             settings.ttsSpeed = ttsSpeed
@@ -229,12 +236,11 @@ fun SettingsScreen(
                             settings.speechSilenceTimeout = speechSilenceTimeout.toLong()
                             settings.speechLanguage = speechLanguage
                             settings.thinkingSoundEnabled = thinkingSoundEnabled
-                            settings.useNodeChat = useNodeChat
 
                             // Stop/Restart services
                             HotwordService.stop(context)
-                            
-                            if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+
+                            if (settings.connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
                                 runtime.connectManual()
                             }
 
@@ -243,7 +249,7 @@ fun SettingsScreen(
                             }
                             onSave()
                         },
-                        enabled = (if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) gatewayHost.isNotBlank() else httpInputUrl.isNotBlank())
+                        enabled = gatewayHost.isNotBlank() || httpInputUrl.isNotBlank()
                     ) {
                         Text(stringResource(R.string.save_button))
                     }
@@ -266,7 +272,7 @@ fun SettingsScreen(
 
             // === UNIFIED CONNECTION SECTION ===
             CollapsibleSection(
-                title = stringResource(R.string.settings_gateway_title).replace("Gateway", "Connection"),
+                title = stringResource(R.string.connection),
                 subtitle = if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY && nodeConnected) nodeStatus.ifBlank { stringResource(R.string.connected) } else "",
                 initiallyExpanded = true
             ) {
@@ -278,35 +284,34 @@ fun SettingsScreen(
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        
-                        // Connection Type Selector
-                        Text("Connection Type", style = MaterialTheme.typography.labelLarge)
+
+                        // Connection Configuration Tabs
+                        Text("Connection Settings", style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
+
+                        TabRow(
+                            selectedTabIndex = selectedTabIndex,
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = Color.Transparent,
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                RadioButton(
-                                    selected = connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY,
-                                    onClick = { connectionType = SettingsRepository.CONNECTION_TYPE_GATEWAY }
-                                )
-                                Text("Gateway", style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                RadioButton(
-                                    selected = connectionType == SettingsRepository.CONNECTION_TYPE_HTTP,
-                                    onClick = { connectionType = SettingsRepository.CONNECTION_TYPE_HTTP }
-                                )
-                                Text("HTTP", style = MaterialTheme.typography.bodyMedium)
-                            }
+                            Tab(
+                                selected = selectedTabIndex == 0,
+                                onClick = { selectedTabIndex = 0 },
+                                text = { Text("Gateway") }
+                            )
+                            Tab(
+                                selected = selectedTabIndex == 1,
+                                onClick = { selectedTabIndex = 1 },
+                                text = { Text("HTTP") }
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                        if (selectedTabIndex == 0) {
                             Text("Gateway Configuration", style = MaterialTheme.typography.titleSmall)
                             Spacer(modifier = Modifier.height(8.dp))
-                            
+
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     value = gatewayHost,
@@ -361,7 +366,7 @@ fun SettingsScreen(
                                     onCheckedChange = { gatewayTls = it; testResult = null }
                                 )
                             }
-                        } else {
+                        } else if (selectedTabIndex == 1) {
                             Text("HTTP API Configuration", style = MaterialTheme.typography.titleSmall)
                             Spacer(modifier = Modifier.height(8.dp))
                             
@@ -401,7 +406,7 @@ fun SettingsScreen(
 
                         
                         // Gateway Specific Settings
-                        if (connectionType == SettingsRepository.CONNECTION_TYPE_GATEWAY) {
+                        if (selectedTabIndex == 0) {
                             Spacer(modifier = Modifier.height(16.dp))
 
                             // Foreground Service Toggle
@@ -425,7 +430,7 @@ fun SettingsScreen(
                         }
 
                         // HTTP Specific Settings
-                        if (connectionType == SettingsRepository.CONNECTION_TYPE_HTTP) {
+                        if (selectedTabIndex == 1) {
                             Text(
                                 text = stringResource(R.string.settings_legacy_desc),
                                 style = MaterialTheme.typography.bodySmall,
@@ -593,48 +598,6 @@ fun SettingsScreen(
                 } // end Card
             } // end CollapsibleSection for Unified Connection
 
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // === CHAT SECTION ===
-            CollapsibleSection(title = "Chat", initiallyExpanded = true) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("チャット送受信方式", style = MaterialTheme.typography.labelLarge)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Gateway Chat: Gatewayを介してチャット (会話履歴・セッション管理込み)\nHTTP Chat: HTTP接続経由で直接AIへリクエスト",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                RadioButton(
-                                    selected = useNodeChat,
-                                    onClick = { useNodeChat = true }
-                                )
-                                Text("Gateway Chat", style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                RadioButton(
-                                    selected = !useNodeChat,
-                                    onClick = { useNodeChat = false }
-                                )
-                                Text("HTTP Chat", style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-                }
-            }
 
             Spacer(modifier = Modifier.height(24.dp))
 

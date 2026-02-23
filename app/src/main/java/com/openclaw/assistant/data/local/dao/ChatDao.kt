@@ -5,9 +5,18 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Embedded
+import androidx.room.Relation
 import com.openclaw.assistant.data.local.entity.MessageEntity
 import com.openclaw.assistant.data.local.entity.SessionEntity
 import kotlinx.coroutines.flow.Flow
+
+data class SessionWithLatestMessageTime(
+    val id: String,
+    val title: String,
+    val createdAt: Long,
+    val latestMessageTime: Long?
+)
 
 @Dao
 interface ChatDao {
@@ -20,6 +29,15 @@ interface ChatDao {
 
     @Query("SELECT * FROM sessions ORDER BY createdAt DESC")
     fun getAllSessions(): Flow<List<SessionEntity>>
+
+    @Query("""
+        SELECT s.id, s.title, s.createdAt, MAX(m.timestamp) as latestMessageTime 
+        FROM sessions s 
+        LEFT JOIN messages m ON s.id = m.sessionId 
+        GROUP BY s.id 
+        ORDER BY COALESCE(MAX(m.timestamp), s.createdAt) DESC
+    """)
+    fun getAllSessionsWithLatestMessageTime(): Flow<List<SessionWithLatestMessageTime>>
 
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun getSessionById(sessionId: String): SessionEntity?

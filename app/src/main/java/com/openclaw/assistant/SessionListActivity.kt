@@ -12,11 +12,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -29,19 +34,26 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.openclaw.assistant.data.local.entity.SessionEntity
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 
@@ -56,22 +68,26 @@ class SessionListActivity : ComponentActivity() {
                 val sessions by viewModel.allSessions.collectAsState()
                 SessionListScreen(
                     sessions = sessions,
+                    isGatewayConfigured = viewModel.isGatewayConfigured,
+                    isHttpConfigured = viewModel.isHttpConfigured,
                     onBack = { finish() },
-                    onSessionClick = { sessionId ->
+                    onSessionClick = { session ->
+                        viewModel.setUseNodeChat(session.isGateway)
                         startActivity(Intent(this, ChatActivity::class.java).apply {
-                            putExtra(ChatActivity.EXTRA_SESSION_ID, sessionId)
+                            putExtra(ChatActivity.EXTRA_SESSION_ID, session.id)
                         })
                     },
-                    onCreateSession = { name ->
-                        viewModel.createSession(name) { sessionId ->
+                    onCreateSession = { name, isGateway ->
+                        viewModel.setUseNodeChat(isGateway)
+                        viewModel.createSession(name, isGateway) { sessionId, createdAsGateway ->
                             startActivity(Intent(this, ChatActivity::class.java).apply {
                                 putExtra(ChatActivity.EXTRA_SESSION_ID, sessionId)
                                 putExtra(ChatActivity.EXTRA_SESSION_TITLE, name)
                             })
                         }
                     },
-                    onDeleteSession = { sessionId ->
-                        viewModel.deleteSession(sessionId)
+                    onDeleteSession = { sessionId, isGateway ->
+                        viewModel.deleteSession(sessionId, isGateway)
                     }
                 )
             }
@@ -87,13 +103,39 @@ class SessionListActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionListScreen(
-    sessions: List<SessionEntity>,
+    sessions: List<SessionUiModel>,
+    isGatewayConfigured: Boolean,
+    isHttpConfigured: Boolean,
     onBack: () -> Unit,
-    onSessionClick: (String) -> Unit,
-    onCreateSession: (String) -> Unit,
-    onDeleteSession: (String) -> Unit
+    onSessionClick: (SessionUiModel) -> Unit,
+    onCreateSession: (String, Boolean) -> Unit,
+    onDeleteSession: (String, Boolean) -> Unit
 ) {
-    var sessionToDelete by remember { mutableStateOf<SessionEntity?>(null) }
+    var sessionToDelete by remember { mutableStateOf<SessionUiModel?>(null) }
+    var showTypeSelectionDialog by remember { mutableStateOf(false) }
+    var showNameInputDialog by remember { mutableStateOf(false) }
+
+    val listState = rememberLazyListState()
+    var scrollTrigger by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scrollTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(scrollTrigger) {
+        if (sessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -108,7 +150,16 @@ fun SessionListScreen(
         },
         floatingActionButton = {
             val newSessionName = stringResource(R.string.new_chat)
-            FloatingActionButton(onClick = { onCreateSession(newSessionName) }) {
+            FloatingActionButton(onClick = { 
+                if (isGatewayConfigured && isHttpConfigured) {
+                    showTypeSelectionDialog = true
+                } else if (isHttpConfigured && !isGatewayConfigured) {
+                    showNameInputDialog = true
+                } else {
+                    // Gateway only, or fallback
+                    onCreateSession("New Conversation", true)
+                }
+            }) {
                 Icon(Icons.Default.Add, contentDescription = newSessionName)
             }
         }
@@ -128,6 +179,7 @@ fun SessionListScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
@@ -137,12 +189,72 @@ fun SessionListScreen(
                 items(sessions, key = { it.id }) { session ->
                     SessionListItem(
                         session = session,
-                        onClick = { onSessionClick(session.id) },
+                        onClick = { onSessionClick(session) },
                         onLongClick = { sessionToDelete = session }
                     )
                 }
             }
         }
+    }
+
+    if (showTypeSelectionDialog) {
+        AlertDialog(
+            onDismissRequest = { showTypeSelectionDialog = false },
+            title = { Text(stringResource(R.string.select_chat_type)) },
+            text = { Text(stringResource(R.string.select_chat_type)) },
+            dismissButton = {
+                TextButton(onClick = {
+                    showTypeSelectionDialog = false
+                    showNameInputDialog = true
+                }) {
+                    Text(stringResource(R.string.chat_type_http))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTypeSelectionDialog = false
+                    onCreateSession("New Conversation", true)
+                }) {
+                    Text(stringResource(R.string.chat_type_gateway))
+                }
+            }
+        )
+    }
+
+    if (showNameInputDialog) {
+        var inputName by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showNameInputDialog = false },
+            title = { Text(stringResource(R.string.new_chat)) },
+            text = { 
+                Column {
+                    Text("Enter session name")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = inputName,
+                        onValueChange = { inputName = it },
+                        label = { Text("Session Name (Optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNameInputDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNameInputDialog = false
+                    val finalName = if (inputName.isNotBlank()) inputName else "New Conversation"
+                    onCreateSession(finalName, false)
+                }) {
+                    Text("Create")
+                }
+            }
+        )
     }
 
 
@@ -156,7 +268,7 @@ fun SessionListScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    onDeleteSession(session.id)
+                    onDeleteSession(session.id, session.isGateway)
                     sessionToDelete = null
                 }) {
                     Text(stringResource(R.string.delete))
@@ -174,7 +286,7 @@ fun SessionListScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionListItem(
-    session: SessionEntity,
+    session: SessionUiModel,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -194,15 +306,29 @@ private fun SessionListItem(
                     text = session.title,
                     style = MaterialTheme.typography.bodyLarge
                 )
-                val dateText = remember(session.createdAt) {
-                    java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
-                        .format(java.util.Date(session.createdAt))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val dateText = remember(session.createdAt) {
+                        java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+                            .format(java.util.Date(session.createdAt))
+                    }
+                    Text(
+                        text = dateText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        color = if (session.isGateway) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = if (session.isGateway) "Gateway" else "HTTP",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                            color = if (session.isGateway) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
                 }
-                Text(
-                    text = dateText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }

@@ -143,6 +143,9 @@
     <string name="delete">削除</string>
     <string name="menu">メニュー</string>
     <string name="back">戻る</string>
+    <string name="select_chat_type">チャット形式を選択</string>
+    <string name="chat_type_gateway">Gateway Chat</string>
+    <string name="chat_type_http">HTTP Chat</string>
 
     <!-- Error Messages -->
     <string name="error_speech_input_timeout">音声入力がありませんでした</string>

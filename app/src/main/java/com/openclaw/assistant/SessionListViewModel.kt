@@ -6,11 +6,19 @@ import androidx.lifecycle.viewModelScope
 import com.openclaw.assistant.data.local.entity.SessionEntity
 import com.openclaw.assistant.data.repository.ChatRepository
 import com.openclaw.assistant.data.SettingsRepository
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class SessionUiModel(
+    val id: String,
+    val title: String,
+    val createdAt: Long,
+    val isGateway: Boolean
+)
 
 class SessionListViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -18,19 +26,35 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
     private val settingsRepository = SettingsRepository.getInstance(application)
     private val nodeRuntime = (application as OpenClawApplication).nodeRuntime
 
-    val allSessions: StateFlow<List<SessionEntity>> = if (settingsRepository.useNodeChat) {
-        nodeRuntime.chatSessions.map { entries ->
-            entries.map { entry ->
-                SessionEntity(
-                    id = entry.key,
-                    title = entry.displayName ?: "New Session",
-                    createdAt = entry.updatedAtMs ?: System.currentTimeMillis()
-                )
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    } else {
-        chatRepository.allSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    }
+    val isGatewayConfigured: Boolean
+        get() = nodeRuntime.manualEnabled.value && nodeRuntime.manualHost.value.isNotBlank()
+                
+    val isHttpConfigured: Boolean
+        get() = settingsRepository.isConfigured()
+
+    val allSessions: StateFlow<List<SessionUiModel>> = combine(
+        nodeRuntime.chatSessions,
+        chatRepository.allSessionsWithLatestTime
+    ) { nodeEntries, localSessions ->
+        val gatewayModels = nodeEntries.map { entry ->
+            SessionUiModel(
+                id = entry.key,
+                title = entry.displayName ?: "New Session",
+                createdAt = entry.updatedAtMs ?: System.currentTimeMillis(),
+                isGateway = true
+            )
+        }
+        val httpModels = localSessions.map { session ->
+            SessionUiModel(
+                id = session.id,
+                title = session.title,
+                createdAt = session.latestMessageTime ?: session.createdAt,
+                isGateway = false
+            )
+        }
+        
+        (gatewayModels + httpModels).sortedByDescending { it.createdAt }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         refreshSessions()
@@ -42,28 +66,30 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun createSession(name: String, onCreated: (String) -> Unit) {
-        if (settingsRepository.useNodeChat) {
+    fun createSession(name: String, isGateway: Boolean, onCreated: (String, Boolean) -> Unit) {
+        if (isGateway) {
             val id = "chat-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}"
             viewModelScope.launch {
                 nodeRuntime.patchChatSession(id, name.trim())
-                onCreated(id)
+                onCreated(id, true)
             }
         } else {
             viewModelScope.launch {
                 val id = chatRepository.createSession(name.trim())
-                onCreated(id)
+                onCreated(id, false)
             }
         }
     }
 
-    fun deleteSession(sessionId: String) {
-        if (settingsRepository.useNodeChat) {
+    fun setUseNodeChat(useNodeChat: Boolean) {
+        settingsRepository.useNodeChat = useNodeChat
+    }
+
+    fun deleteSession(sessionId: String, isGateway: Boolean) {
+        if (isGateway) {
             viewModelScope.launch {
-                val ok = nodeRuntime.deleteChatSession(sessionId)
-                if (ok) {
-                    nodeRuntime.refreshChatSessions()
-                }
+                nodeRuntime.deleteChatSession(sessionId)
+                nodeRuntime.refreshChatSessions()
             }
         } else {
             viewModelScope.launch {

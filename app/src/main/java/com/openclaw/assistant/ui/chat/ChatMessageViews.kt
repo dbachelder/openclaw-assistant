@@ -249,10 +249,10 @@ private fun PulseDot(alpha: Float) {
 }
 
 @Composable
-fun ChatCodeBlock(code: String, language: String?) {
+fun ChatCodeBlock(code: String, language: String?, textColor: Color = MaterialTheme.colorScheme.onSurface) {
   Surface(
     shape = RoundedCornerShape(12.dp),
-    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    color = textColor.copy(alpha = 0.15f),
     modifier = Modifier.fillMaxWidth(),
   ) {
     Text(
@@ -260,7 +260,7 @@ fun ChatCodeBlock(code: String, language: String?) {
       modifier = Modifier.padding(10.dp),
       fontFamily = FontFamily.Monospace,
       style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.onSurface,
+      color = textColor,
     )
   }
 }

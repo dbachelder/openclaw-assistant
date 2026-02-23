@@ -462,29 +462,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun sendViaHttp(sessionId: String, text: String) {
-        val result = apiClient.sendMessage(
-            httpUrl = settings.getChatCompletionsUrl(),
-            message = text,
-            sessionId = sessionId,
-            authToken = settings.authToken.takeIf { it.isNotBlank() },
-            agentId = getEffectiveAgentId()
-        )
+    private fun sendViaHttp(sessionId: String, text: String) {
+        val httpUrl = settings.getChatCompletionsUrl()
+        val authToken = settings.authToken.takeIf { it.isNotBlank() }
+        val effectiveAgentId = getEffectiveAgentId()
 
-        result.fold(
-            onSuccess = { response ->
-                val responseText = response.getResponseText() ?: "No response"
-                chatRepository.addMessage(sessionId, responseText, isUser = false)
+        chatRepository.applicationScope.launch {
+            try {
+                val result = apiClient.sendMessage(
+                    httpUrl = httpUrl,
+                    message = text,
+                    sessionId = sessionId,
+                    authToken = authToken,
+                    agentId = effectiveAgentId
+                )
 
-                stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false) }
-                afterResponseReceived(responseText)
-            },
-            onFailure = { error ->
-                stopThinkingSound()
-                _uiState.update { it.copy(isThinking = false, error = error.message) }
+                result.fold(
+                    onSuccess = { response ->
+                        val responseText = response.getResponseText() ?: "No response"
+                        chatRepository.addMessage(sessionId, responseText, isUser = false)
+
+                        viewModelScope.launch {
+                            stopThinkingSound()
+                            _uiState.update { it.copy(isThinking = false) }
+                            afterResponseReceived(responseText)
+                        }
+                    },
+                    onFailure = { error ->
+                        viewModelScope.launch {
+                            stopThinkingSound()
+                            _uiState.update { it.copy(isThinking = false, error = error.message) }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                viewModelScope.launch {
+                    stopThinkingSound()
+                    _uiState.update { it.copy(isThinking = false, error = e.message) }
+                }
             }
-        )
+        }
     }
 
     private fun afterResponseReceived(responseText: String) {
