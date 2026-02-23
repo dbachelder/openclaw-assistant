@@ -991,6 +991,7 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             val openClawVersion = runtime.serverVersion.value
+                            Log.d("SettingsActivity", "Report Issue clicked. serverVersion: $openClawVersion")
                             val systemInfo = SystemInfoProvider.getSystemInfoReport(context, settings, openClawVersion)
                             val body = "\n\n$systemInfo"
                             val uri = Uri.parse("https://github.com/yuga-hashimoto/openclaw-assistant/issues/new")
@@ -1013,6 +1014,44 @@ fun SettingsScreen(
                             context.packageManager.getPackageInfo(context.packageName, 0).versionName
                         }.getOrNull() ?: ""
                     }
+                    var isCheckingUpdate by remember { mutableStateOf(false) }
+
+                    Button(
+                        onClick = {
+                            isCheckingUpdate = true
+                            scope.launch {
+                                val info = com.openclaw.assistant.utils.UpdateChecker.checkUpdate(versionName)
+                                isCheckingUpdate = false
+                                if (info != null && info.hasUpdate) {
+                                    Toast.makeText(context, context.getString(R.string.update_available, info.latestVersion), Toast.LENGTH_LONG).show()
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                    context.startActivity(intent)
+                                } else if (info != null) {
+                                    Toast.makeText(context, context.getString(R.string.up_to_date), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, context.getString(R.string.error_network), Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isCheckingUpdate) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.checking_update))
+                        } else {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.check_for_updates))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Text(
                         text = stringResource(R.string.app_version, versionName),
                         style = MaterialTheme.typography.bodySmall,

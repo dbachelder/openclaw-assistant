@@ -404,6 +404,27 @@ fun MainScreen(
         }
     }
 
+    // Check for updates on startup
+    LaunchedEffect(Unit) {
+        try {
+            val versionName = context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            val info = com.openclaw.assistant.utils.UpdateChecker.checkUpdate(versionName ?: "")
+            if (info != null && info.hasUpdate) {
+                val result = snackbarHostState.showSnackbar(
+                    message = context.getString(R.string.update_available, info.latestVersion),
+                    actionLabel = context.getString(R.string.update_action),
+                    duration = SnackbarDuration.Indefinite
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                    context.startActivity(intent)
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore startup update check errors
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -510,7 +531,7 @@ fun MainScreen(
                     modifier = Modifier.weight(1f)
                 )
 
-                // Location Toggle (Cycle)
+                // Location Toggle (ON/OFF)
                 val locationStatusText = when {
                     locationMode == LocationMode.Off -> stringResource(R.string.location_off)
                     locationPrecise -> stringResource(R.string.location_precise)
@@ -526,23 +547,18 @@ fun MainScreen(
                             val coarseGranted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.ACCESS_COARSE_LOCATION
                             ) == PackageManager.PERMISSION_GRANTED
-                            if (coarseGranted) {
+                            val fineGranted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
+                            
+                            if (coarseGranted || fineGranted) {
                                 runtime.setLocationMode(LocationMode.WhileUsing)
-                                runtime.setLocationPreciseEnabled(false)
+                                runtime.setLocationPreciseEnabled(fineGranted)
                             } else {
                                 onRequestPermissions(listOf(
                                     Manifest.permission.ACCESS_COARSE_LOCATION,
                                     Manifest.permission.ACCESS_FINE_LOCATION
                                 ))
-                            }
-                        } else if (!locationPrecise) {
-                            val fineGranted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.ACCESS_FINE_LOCATION
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (fineGranted) {
-                                runtime.setLocationPreciseEnabled(true)
-                            } else {
-                                onRequestPermissions(listOf(Manifest.permission.ACCESS_FINE_LOCATION))
                             }
                         } else {
                             runtime.setLocationMode(LocationMode.Off)

@@ -369,4 +369,10 @@
     <string name="wake_word_classic_title">Vosk</string>
     <string name="state_verify_fingerprint">ゲートウェイ証明書を確認中…</string>
     <string name="state_failed_fingerprint">失敗: 証明書を読み込めませんでした</string>
+    <!-- Update Checker -->
+    <string name="check_for_updates">アップデートを確認</string>
+    <string name="checking_update">確認中…</string>
+    <string name="update_available">新しいバージョン (%s) が利用可能です</string>
+    <string name="up_to_date">最新バージョンです</string>
+    <string name="update_action">更新</string>
 </resources>
