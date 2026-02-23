@@ -3,6 +3,7 @@ package com.openclaw.assistant.gateway
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.crypto.tink.CleartextKeysetHandle
 import com.google.crypto.tink.JsonKeysetWriter
 import com.google.crypto.tink.KeyTemplates
@@ -46,6 +47,7 @@ class DeviceIdentity(context: Context) {
             extractPublicKey(handle)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize: ${e.message}")
+            FirebaseCrashlytics.getInstance().recordException(e)
         }
     }
 
@@ -107,6 +109,7 @@ class DeviceIdentity(context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to extract public key: ${e.message}")
+            FirebaseCrashlytics.getInstance().recordException(e)
         }
     }
 
@@ -119,6 +122,7 @@ class DeviceIdentity(context: Context) {
             )
         } catch (e: Exception) {
             Log.e(TAG, "Sign failed: ${e.message}")
+            FirebaseCrashlytics.getInstance().recordException(e)
             null
         }
     }

@@ -11,6 +11,10 @@
 -keepattributes Signature
 -keep class com.google.gson.** { *; }
 -keep class com.openclaw.assistant.api.** { *; }
+# UpdateChecker uses Gson to deserialize GitHub API response.
+# Without this rule, R8 renames GithubRelease fields in release builds,
+# causing Gson deserialization to fail silently and return null.
+-keep class com.openclaw.assistant.utils.GithubRelease { *; }
 
 
 # Google Error Prone Annotations

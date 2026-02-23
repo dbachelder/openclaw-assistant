@@ -2,6 +2,7 @@ package com.openclaw.assistant
 
 import android.app.Application
 import android.util.Log
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import java.security.Security
 
 class OpenClawApplication : Application() {
@@ -20,6 +21,7 @@ class OpenClawApplication : Application() {
             Security.insertProviderAt(bcProvider, 1)
         } catch (e: Throwable) {
             Log.e("OpenClawApp", "Failed to register Bouncy Castle provider", e)
+            FirebaseCrashlytics.getInstance().recordException(e)
         }
     }
 }
