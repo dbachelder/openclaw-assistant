@@ -3,7 +3,6 @@ package com.openclaw.assistant.gateway
 import android.annotation.SuppressLint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.CertificateException
@@ -12,10 +11,8 @@ import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLParameters
-import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
@@ -95,25 +92,16 @@ suspend fun probeGatewayTlsFingerprint(
   if (port !in 1..65535) return null
 
   return withContext(Dispatchers.IO) {
-    val trustAll =
-      @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
-      object : X509TrustManager {
-        @SuppressLint("TrustAllX509TrustManager")
-        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
-        @SuppressLint("TrustAllX509TrustManager")
-        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-      }
+    val defaultTrust = defaultTrustManager()
 
     val context = SSLContext.getInstance("TLS")
-    context.init(null, arrayOf(trustAll), SecureRandom())
+    context.init(null, arrayOf(defaultTrust), SecureRandom())
 
-    // Use createSocket(host, port) to ensure SNI is set automatically by the OS.
     var socket: SSLSocket? = null
     try {
       socket = context.socketFactory.createSocket(trimmedHost, port) as SSLSocket
       socket.soTimeout = timeoutMs
-      
+
       socket.startHandshake()
       val cert = socket.session.peerCertificates.firstOrNull() as? X509Certificate ?: return@withContext null
       sha256Hex(cert.encoded)
