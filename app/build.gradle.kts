@@ -82,6 +82,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = true
+            buildConfigField("boolean", "FIREBASE_ENABLED", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -89,6 +90,7 @@ android {
         }
         release {
             isMinifyEnabled = true
+            buildConfigField("boolean", "FIREBASE_ENABLED", "true")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
