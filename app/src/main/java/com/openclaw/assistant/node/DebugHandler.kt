@@ -28,7 +28,11 @@ class DebugHandler(
       results.add("publicKeyBase64Url: ${pubKeyUrl ?: "NULL (FAILED)"}")
 
       // Test signing
-      val signature = identityStore.signPayload(testPayload, identity)
+      val signature = try {
+        identityStore.signPayload(testPayload, identity)
+      } catch (e: IllegalStateException) {
+        null
+      }
       results.add("signPayload: ${if (signature != null) "${signature.take(20)}... (OK)" else "NULL (FAILED)"}")
 
       // Test self-verify

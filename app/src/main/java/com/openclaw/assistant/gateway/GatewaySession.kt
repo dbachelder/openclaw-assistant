@@ -380,7 +380,11 @@ class GatewaySession(
           token = if (authToken.isNotEmpty()) authToken else null,
           nonce = connectNonce,
         )
-      val signature = identityStore.signPayload(payload, identity)
+      val signature = try {
+        identityStore.signPayload(payload, identity)
+      } catch (e: IllegalStateException) {
+        null
+      }
       val publicKey = identityStore.publicKeyBase64Url(identity)
       val deviceJson =
         if (!signature.isNullOrBlank() && !publicKey.isNullOrBlank()) {
