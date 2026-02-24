@@ -52,7 +52,7 @@ class NodeRuntime(context: Context) {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   val prefs = SecurePrefs(appContext)
-  private val deviceAuthStore = DeviceAuthStore(prefs)
+  private val deviceAuthStore = DeviceAuthStore(appContext, prefs)
   val canvas = CanvasController()
   val camera = CameraCaptureManager(appContext)
   val location = LocationCaptureManager(appContext)
