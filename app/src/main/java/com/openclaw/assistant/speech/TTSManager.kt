@@ -172,11 +172,14 @@ class TTSManager(private val context: Context) {
                         tts?.speak(text, queueMode, null, utteranceId)
                     }
                     // Wait up to 5s for init
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    val timeoutRunnable = Runnable {
                         if (continuation.isActive && !isInitialized) {
                             continuation.resume(false)
                         }
-                    }, 5000)
+                    }
+                    handler.postDelayed(timeoutRunnable, 5000)
+                    continuation.invokeOnCancellation { handler.removeCallbacks(timeoutRunnable) }
                 }
             }
         }
