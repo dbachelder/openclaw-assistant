@@ -23,12 +23,16 @@ import com.openclaw.assistant.R
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.openclaw.assistant.data.SettingsRepository
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicInteger
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener as VoskRecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 import java.io.IOException
+import java.security.MessageDigest
 import org.json.JSONObject
 
 /**
@@ -41,6 +45,8 @@ class HotwordService : Service(), VoskRecognitionListener {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "hotword_channel"
         private const val SAMPLE_RATE = 16000.0f
+        private const val MAX_MODEL_LOAD_RETRIES = 2
+        private const val MODEL_RETRY_DELAY_MS = 1000L
         const val ACTION_RESUME_HOTWORD = "com.openclaw.assistant.ACTION_RESUME_HOTWORD"
         const val ACTION_PAUSE_HOTWORD = "com.openclaw.assistant.ACTION_PAUSE_HOTWORD"
         
@@ -71,11 +77,12 @@ class HotwordService : Service(), VoskRecognitionListener {
 
     @Volatile private var isListeningForCommand = false
     @Volatile private var isSessionActive = false
-    private var audioRetryCount = 0
+    private val audioRetryCount = AtomicInteger(0)
     private val MAX_AUDIO_RETRIES = 5
     private var watchdogJob: Job? = null
     private var errorRecoveryJob: Job? = null
     private var retryJob: Job? = null
+    private val retryMutex = Mutex()
     private val SESSION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
 
     private val controlReceiver = object : android.content.BroadcastReceiver() {
@@ -307,15 +314,13 @@ class HotwordService : Service(), VoskRecognitionListener {
         nm.notify(NOTIFICATION_ID, createNotification())
     }
 
-    private fun initVosk() {
+    private fun initVosk(retryCount: Int = 0) {
         if (model != null) {
             if (!isSessionActive) startHotwordListening()
             return
         }
         val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
 
-        // Clear vosk_unsupported flag when the app is updated, so the new Vosk
-        // native libraries get a chance to load on devices that previously failed.
         val currentVersion = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
@@ -337,11 +342,44 @@ class HotwordService : Service(), VoskRecognitionListener {
 
         scope.launch(Dispatchers.IO) {
             try {
-                val modelPath = copyAssets()
-                if (modelPath != null) {
+                var modelPath = copyAssets()
+                if (modelPath == null) {
+                    Log.e(TAG, "Model copy failed, cannot initialize Vosk")
+                    FirebaseCrashlytics.getInstance().log("Vosk model copy failed")
+                    return@launch
+                }
+
+                try {
+                    Log.d(TAG, "Loading Vosk model from: $modelPath")
                     model = Model(modelPath)
+                    Log.d(TAG, "Vosk model loaded successfully")
                     withContext(Dispatchers.Main) {
                         if (!isSessionActive) startHotwordListening()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load Vosk model: ${e.message}", e)
+                    FirebaseCrashlytics.getInstance().recordException(e)
+
+                    if (retryCount < MAX_MODEL_LOAD_RETRIES) {
+                        Log.w(TAG, "Model load failed, will retry with fresh copy (attempt ${retryCount + 1}/$MAX_MODEL_LOAD_RETRIES)")
+
+                        // Delete the model directory to force a fresh copy
+                        val targetDir = java.io.File(filesDir, "model")
+                        if (targetDir.exists()) {
+                            val deleted = targetDir.deleteRecursively()
+                            Log.d(TAG, "Model directory deleted for retry: $deleted")
+                        }
+
+                        // Clear version prefs to force re-copy
+                        prefs.edit().remove("model_version").apply()
+
+                        withContext(Dispatchers.Main) {
+                            delay(MODEL_RETRY_DELAY_MS)
+                            initVosk(retryCount + 1)
+                        }
+                    } else {
+                        Log.e(TAG, "Max model load retries ($MAX_MODEL_LOAD_RETRIES) exceeded. Giving up.")
+                        FirebaseCrashlytics.getInstance().log("Vosk model load failed after $MAX_MODEL_LOAD_RETRIES retries")
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -354,7 +392,7 @@ class HotwordService : Service(), VoskRecognitionListener {
                     .putInt("vosk_unsupported_version", currentVersion)
                     .apply()
             } catch (e: Exception) {
-                Log.e(TAG, "Init error", e)
+                Log.e(TAG, "Vosk init error: ${e.message}", e)
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
@@ -363,7 +401,6 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun copyAssets(): String? {
         val targetDir = java.io.File(filesDir, "model")
 
-        // Check version to avoid redundant copy
         val currentVersion = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
@@ -385,18 +422,95 @@ class HotwordService : Service(), VoskRecognitionListener {
 
         try {
             if (targetDir.exists()) {
+                Log.d(TAG, "Deleting existing model directory for fresh copy")
                 targetDir.deleteRecursively()
             }
 
             val success = copyAssetFolder(assets, "model", targetDir.absolutePath)
-            if (success) {
-                prefs.edit().putInt("model_version", currentVersion).apply()
-                return targetDir.absolutePath
+            if (!success) {
+                Log.e(TAG, "Model copy failed - some files may not have copied successfully")
+                return null
             }
-            return null
+
+            // Verify checksums of copied files
+            val checksumsValid = verifyModelChecksums(targetDir)
+            if (!checksumsValid) {
+                Log.e(TAG, "Model checksum verification failed - files may be corrupted")
+                targetDir.deleteRecursively()
+                return null
+            }
+
+            prefs.edit().putInt("model_version", currentVersion).apply()
+            Log.d(TAG, "Model copied and verified successfully")
+            return targetDir.absolutePath
         } catch (e: Exception) {
+            Log.e(TAG, "Error during model copy: ${e.message}", e)
             return null
         }
+    }
+
+    private fun verifyModelChecksums(modelDir: java.io.File): Boolean {
+        if (!modelDir.exists() || !modelDir.isDirectory) {
+            Log.e(TAG, "Model directory does not exist or is not a directory")
+            return false
+        }
+
+        val files = modelDir.listFilesRecursive()
+        if (files.isEmpty()) {
+            Log.e(TAG, "No files found in model directory")
+            return false
+        }
+
+        var allValid = true
+        for (file in files) {
+            if (!file.isFile) continue
+
+            val checksum = computeFileChecksum(file)
+            if (checksum == null) {
+                Log.e(TAG, "Failed to compute checksum for ${file.name}")
+                allValid = false
+                continue
+            }
+
+            // Store checksum in prefs for future verification
+            val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+            val key = "model_checksum_${file.name}"
+            prefs.edit().putString(key, checksum).apply()
+
+            Log.d(TAG, "Verified ${file.name}: $checksum")
+        }
+
+        return allValid
+    }
+
+    private fun computeFileChecksum(file: java.io.File): String? {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error computing checksum for ${file.name}: ${e.message}")
+            null
+        }
+    }
+
+    private fun java.io.File.listFilesRecursive(): List<java.io.File> {
+        val result = mutableListOf<java.io.File>()
+        val files = listFiles() ?: return result
+        for (file in files) {
+            if (file.isDirectory) {
+                result.addAll(file.listFilesRecursive())
+            } else {
+                result.add(file)
+            }
+        }
+        return result
     }
 
     private fun copyAssetFolder(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
@@ -418,19 +532,86 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     private fun copyAsset(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
-        var inStream: java.io.`InputStream`? = null
+        var inStream: java.io.InputStream? = null
         var outStream: java.io.OutputStream? = null
         try {
             inStream = assetManager.open(fromAssetPath)
-            java.io.File(toPath).createNewFile()
-            outStream = java.io.FileOutputStream(toPath)
-            inStream.copyTo(outStream)
+            val outFile = java.io.File(toPath)
+            outFile.createNewFile()
+            outStream = java.io.FileOutputStream(outFile)
+            val bytesCopied = inStream.copyTo(outStream)
+            Log.d(TAG, "Copied $fromAssetPath to $toPath ($bytesCopied bytes)")
             return true
+        } catch (e: java.io.FileNotFoundException) {
+            Log.e(TAG, "Asset not found: $fromAssetPath")
+            return false
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "IO error copying $fromAssetPath: ${e.message}")
+            return false
         } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error copying $fromAssetPath: ${e.message}")
             return false
         } finally {
-            inStream?.close()
-            outStream?.close()
+            try { inStream?.close() } catch (_: Exception) {}
+            try { outStream?.close() } catch (_: Exception) {}
+        }
+    }
+
+    // Cache buffer size to avoid repeated calculations
+    private var cachedBufferSize: Int? = null
+
+    /**
+     * Validates AudioRecord can be created on a background thread with timeout.
+     * Returns the buffer size if successful, null if validation fails.
+     */
+    private suspend fun validateAudioRecordAsync(): Int? = withContext(Dispatchers.IO) {
+        try {
+            withTimeout(2000) {
+                // Use cached buffer size if available
+                val bufferSize = cachedBufferSize ?: run {
+                    val size = AudioRecord.getMinBufferSize(
+                        16000,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    )
+                    if (size == AudioRecord.ERROR || size == AudioRecord.ERROR_BAD_VALUE) {
+                        Log.e(TAG, "AudioRecord.getMinBufferSize failed: $size")
+                        return@withTimeout null
+                    }
+                    cachedBufferSize = size
+                    size
+                }
+
+                val testRecord = try {
+                    if (android.content.pm.PackageManager.PERMISSION_GRANTED !=
+                        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)) {
+                        Log.e(TAG, "RECORD_AUDIO permission not granted")
+                        return@withTimeout null
+                    }
+                    AudioRecord(
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                        16000,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        bufferSize
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "AudioRecord creation failed", e)
+                    null
+                }
+
+                if (testRecord == null || testRecord.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "AudioRecord failed to initialize. Mic may be in use or unavailable.")
+                    testRecord?.release()
+                    return@withTimeout null
+                }
+
+                testRecord.release()
+                bufferSize
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "AudioRecord validation timed out after 2000ms")
+            null
         }
     }
 
@@ -455,76 +636,52 @@ class HotwordService : Service(), VoskRecognitionListener {
             return
         }
 
-        // Pre-validate that AudioRecord can actually be created
-        val bufferSize = AudioRecord.getMinBufferSize(
-            16000,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
-            Log.e(TAG, "AudioRecord.getMinBufferSize failed: $bufferSize")
-            scheduleAudioRetry()
-            return
-        }
-        val testRecord = try {
-            if (android.content.pm.PackageManager.PERMISSION_GRANTED !=
-                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)) {
-                Log.e(TAG, "RECORD_AUDIO permission not granted")
+        // Launch AudioRecord validation in background with timeout
+        scope.launch {
+            val bufferSize = validateAudioRecordAsync()
+            if (bufferSize == null) {
                 scheduleAudioRetry()
-                return
+                return@launch
             }
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                16000,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "AudioRecord creation failed", e)
-            null
-        }
-        if (testRecord == null || testRecord.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialize. Mic may be in use or unavailable.")
-            testRecord?.release()
-            scheduleAudioRetry()
-            return
-        }
-        testRecord.release()
-        audioRetryCount = 0
+            audioRetryCount.set(0)
 
-        try {
-            // Get wake words from settings
-            val wakeWords = settings.getWakeWords()
-            val wakeWordsJson = wakeWords.joinToString("\", \"", "[\"", "\"]")
-            Log.d(TAG, "Starting hotword detection with words: $wakeWordsJson")
+            try {
+                // Get wake words from settings
+                val wakeWords = settings.getWakeWords()
+                val wakeWordsJson = wakeWords.joinToString("\", \"", "[\"", "\"]")
+                Log.d(TAG, "Starting hotword detection with words: $wakeWordsJson")
 
-            val rec = Recognizer(model, SAMPLE_RATE, wakeWordsJson)
-            speechService = SpeechService(rec, SAMPLE_RATE)
-            speechService?.startListening(this)
-            Log.d(TAG, "Hotword listening started")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start hotword listening", e)
-            speechService = null
-            scheduleAudioRetry()
+                val rec = Recognizer(model, SAMPLE_RATE, wakeWordsJson)
+                speechService = SpeechService(rec, SAMPLE_RATE)
+                speechService?.startListening(this@HotwordService)
+                Log.d(TAG, "Hotword listening started")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start hotword listening", e)
+                speechService = null
+                scheduleAudioRetry()
+            }
         }
     }
 
     private fun scheduleAudioRetry() {
-        if (audioRetryCount >= MAX_AUDIO_RETRIES) {
-            Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
-            audioRetryCount = 0
-            showMicUnavailableNotification()
-            return
-        }
-        audioRetryCount++
-        val delayMs = (2000L * audioRetryCount).coerceAtMost(10000L)
-        Log.w(TAG, "Scheduling audio retry #$audioRetryCount in ${delayMs}ms")
-        retryJob?.cancel()
-        retryJob = scope.launch {
-            delay(delayMs)
-            if (!isSessionActive) {
-                startHotwordListening()
+        scope.launch {
+            retryMutex.withLock {
+                val currentCount = audioRetryCount.incrementAndGet()
+                if (currentCount > MAX_AUDIO_RETRIES) {
+                    Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
+                    audioRetryCount.set(0)
+                    showMicUnavailableNotification()
+                    return@withLock
+                }
+                val delayMs = (2000L * currentCount).coerceAtMost(10000L)
+                Log.w(TAG, "Scheduling audio retry #$currentCount in ${delayMs}ms")
+                retryJob?.cancel()
+                retryJob = scope.launch {
+                    delay(delayMs)
+                    if (!isSessionActive) {
+                        startHotwordListening()
+                    }
+                }
             }
         }
     }
@@ -607,7 +764,7 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun resumeHotwordDetection() {
         if (isSessionActive) return
         isListeningForCommand = false
-        audioRetryCount = 0
+        audioRetryCount.set(0)
         updateNotification()
         scope.launch {
             delay(500)
