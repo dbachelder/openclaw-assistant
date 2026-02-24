@@ -74,14 +74,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var wakeLockAcquireTime: Long = 0
     private var wakeLockWatchdogJob: Job? = null
 
-    private enum class WakeLockState {
-        RELEASED,
-        ACQUIRED,
-        RELEASED_BY_WATCHDOG
-    }
-    private val _wakeLockState = MutableStateFlow(WakeLockState.RELEASED)
-    val wakeLockState: StateFlow<WakeLockState> = _wakeLockState.asStateFlow()
-
     companion object {
         private const val WAKE_LOCK_MAX_TIMEOUT_MS = 2 * 60 * 1000L // 2 minutes max
         private const val WAKE_LOCK_WATCHDOG_TIMEOUT_MS = 60 * 1000L // 60 second watchdog
@@ -821,7 +813,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             acquire(WAKE_LOCK_MAX_TIMEOUT_MS)
         }
         wakeLockAcquireTime = System.currentTimeMillis()
-        _wakeLockState.value = WakeLockState.ACQUIRED
         Log.d(TAG, "WakeLock acquired at ${wakeLockAcquireTime}, maxTimeout=${WAKE_LOCK_MAX_TIMEOUT_MS}ms")
 
         // Start watchdog for early release to save battery
@@ -836,7 +827,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (lock.isHeld) {
                 val heldDuration = System.currentTimeMillis() - wakeLockAcquireTime
                 lock.release()
-                _wakeLockState.value = WakeLockState.RELEASED
                 Log.d(TAG, "WakeLock released after ${heldDuration}ms")
             } else {
                 Log.w(TAG, "WakeLock release called but not held")
@@ -854,7 +844,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val heldDuration = System.currentTimeMillis() - wakeLockAcquireTime
                 Log.w(TAG, "WakeLock watchdog triggered after ${heldDuration}ms, forcing release")
                 wakeLock?.release()
-                _wakeLockState.value = WakeLockState.RELEASED_BY_WATCHDOG
                 wakeLock = null
                 wakeLockAcquireTime = 0
             }
