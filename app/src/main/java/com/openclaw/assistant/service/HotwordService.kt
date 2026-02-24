@@ -434,6 +434,59 @@ class HotwordService : Service(), VoskRecognitionListener {
         }
     }
 
+    // Cache buffer size to avoid repeated calculations
+    private var cachedBufferSize: Int? = null
+
+    /**
+     * Validates AudioRecord can be created on a background thread with timeout.
+     * Returns the buffer size if successful, null if validation fails.
+     */
+    private suspend fun validateAudioRecordAsync(): Int? = withContext(Dispatchers.IO) {
+        try {
+            withTimeout(2000) {
+                // Use cached buffer size if available
+                val bufferSize = cachedBufferSize ?: run {
+                    val size = AudioRecord.getMinBufferSize(
+                        16000,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    )
+                    if (size == AudioRecord.ERROR || size == AudioRecord.ERROR_BAD_VALUE) {
+                        Log.e(TAG, "AudioRecord.getMinBufferSize failed: $size")
+                        return@withTimeout null
+                    }
+                    cachedBufferSize = size
+                    size
+                }
+
+                val testRecord = try {
+                    AudioRecord(
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                        16000,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        bufferSize
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "AudioRecord creation failed", e)
+                    null
+                }
+
+                if (testRecord == null || testRecord.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "AudioRecord failed to initialize. Mic may be in use or unavailable.")
+                    testRecord?.release()
+                    return@withTimeout null
+                }
+
+                testRecord.release()
+                bufferSize
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "AudioRecord validation timed out after 2000ms")
+            null
+        }
+    }
+
     private fun startHotwordListening() {
         if (model == null || isSessionActive) return
 
@@ -455,52 +508,30 @@ class HotwordService : Service(), VoskRecognitionListener {
             return
         }
 
-        // Pre-validate that AudioRecord can actually be created
-        val bufferSize = AudioRecord.getMinBufferSize(
-            16000,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
-            Log.e(TAG, "AudioRecord.getMinBufferSize failed: $bufferSize")
-            scheduleAudioRetry()
-            return
-        }
-        val testRecord = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                16000,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "AudioRecord creation failed", e)
-            null
-        }
-        if (testRecord == null || testRecord.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialize. Mic may be in use or unavailable.")
-            testRecord?.release()
-            scheduleAudioRetry()
-            return
-        }
-        testRecord.release()
-        audioRetryCount = 0
+        // Launch AudioRecord validation in background with timeout
+        scope.launch {
+            val bufferSize = validateAudioRecordAsync()
+            if (bufferSize == null) {
+                scheduleAudioRetry()
+                return@launch
+            }
+            audioRetryCount = 0
 
-        try {
-            // Get wake words from settings
-            val wakeWords = settings.getWakeWords()
-            val wakeWordsJson = wakeWords.joinToString("\", \"", "[\"", "\"]")
-            Log.d(TAG, "Starting hotword detection with words: $wakeWordsJson")
+            try {
+                // Get wake words from settings
+                val wakeWords = settings.getWakeWords()
+                val wakeWordsJson = wakeWords.joinToString("\", \"", "[\"", "\"]")
+                Log.d(TAG, "Starting hotword detection with words: $wakeWordsJson")
 
-            val rec = Recognizer(model, SAMPLE_RATE, wakeWordsJson)
-            speechService = SpeechService(rec, SAMPLE_RATE)
-            speechService?.startListening(this)
-            Log.d(TAG, "Hotword listening started")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start hotword listening", e)
-            speechService = null
-            scheduleAudioRetry()
+                val rec = Recognizer(model, SAMPLE_RATE, wakeWordsJson)
+                speechService = SpeechService(rec, SAMPLE_RATE)
+                speechService?.startListening(this@HotwordService)
+                Log.d(TAG, "Hotword listening started")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start hotword listening", e)
+                speechService = null
+                scheduleAudioRetry()
+            }
         }
     }
 
