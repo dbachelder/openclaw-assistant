@@ -307,10 +307,13 @@ class GatewaySession(
       val res = request("connect", payload, timeoutMs = 8_000)
       if (!res.ok) {
         val msg = res.error?.message ?: "connect failed"
-        if (canFallbackToShared) {
+        val code = res.error?.code ?: "UNAVAILABLE"
+        // Only clear the stored token on authentication errors, not network/server errors.
+        // This prevents unnecessary re-pairing after transient failures.
+        if (canFallbackToShared && isAuthError(code, msg)) {
           deviceAuthStore.clearToken(identityId, options.role)
         }
-        throw IllegalStateException(msg)
+        throw IllegalStateException("$code: $msg")
       }
       val payloadJson = res.payloadJson ?: throw IllegalStateException("connect failed: missing payload")
       val obj = json.parseToJsonElement(payloadJson).asObjectOrNull() ?: throw IllegalStateException("connect failed")
@@ -555,6 +558,32 @@ class GatewaySession(
         waiter.cancel()
       }
       pending.clear()
+    }
+
+    /**
+     * Determines if an error is an authentication error that should trigger token clearing.
+     * Only clear tokens on auth failures, not network or server errors.
+     */
+    private fun isAuthError(code: String, message: String): Boolean {
+      val authCodes = setOf(
+        "UNAUTHORIZED",
+        "FORBIDDEN",
+        "AUTHENTICATION_FAILED",
+        "INVALID_TOKEN",
+        "DEVICE_NOT_APPROVED",
+        "PAIRING_REQUIRED"
+      )
+      if (code in authCodes) return true
+      val lowerMsg = message.lowercase()
+      val authPhrases = setOf(
+        "pairing required",
+        "not approved",
+        "invalid token",
+        "authentication failed",
+        "unauthorized",
+        "forbidden"
+      )
+      return authPhrases.any { lowerMsg.contains(it) }
     }
   }
 
