@@ -65,12 +65,12 @@ fun buildGatewayTlsConfig(
   val context = SSLContext.getInstance("TLS")
   context.init(null, arrayOf(trustManager), SecureRandom())
   val defaultVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
+  val pinningActive = expected != null || params.allowTOFU
   val verifier = HostnameVerifier { hostname, session ->
-    val pinningActive = expected != null || params.allowTOFU
-    if (pinningActive && isIpAddress(hostname)) {
-      return true
+    when {
+      pinningActive && isIpAddress(hostname) -> true
+      else -> defaultVerifier.verify(hostname, session)
     }
-    defaultVerifier.verify(hostname, session)
   }
   return GatewayTlsConfig(
     sslSocketFactory = context.socketFactory,
