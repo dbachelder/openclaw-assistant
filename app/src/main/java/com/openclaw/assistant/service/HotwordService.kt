@@ -781,8 +781,15 @@ class HotwordService : Service(), VoskRecognitionListener {
             Log.w(TAG, "Watchdog timeout! Auto-resuming hotword detection.")
             isSessionActive = false
             isListeningForCommand = false
+            sendResumeBroadcast()
             resumeHotwordDetection()
         }
+    }
+
+    private fun sendResumeBroadcast() {
+        val intent = Intent(ACTION_RESUME_HOTWORD)
+        intent.setPackage(packageName)
+        sendBroadcast(intent)
     }
 
     private fun cancelWatchdog() {
