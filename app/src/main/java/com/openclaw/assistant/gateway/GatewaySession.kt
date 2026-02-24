@@ -61,6 +61,8 @@ class GatewaySession(
   private val onEvent: (event: String, payloadJson: String?) -> Unit,
   private val onInvoke: (suspend (InvokeRequest) -> InvokeResult)? = null,
   private val onTlsFingerprint: ((stableId: String, fingerprint: String) -> Unit)? = null,
+  private val onConnecting: ((isReconnect: Boolean) -> Unit)? = null,
+  private val onMaxRetriesReached: (() -> Unit)? = null,
 ) {
   data class InvokeRequest(
     val id: String,
@@ -83,6 +85,11 @@ class GatewaySession(
   private val json = Json { ignoreUnknownKeys = true }
   private val writeLock = Mutex()
   private val pending = ConcurrentHashMap<String, CompletableDeferred<RpcResponse>>()
+
+  companion object {
+    private const val MAX_RETRY_ATTEMPTS = 10
+    private const val STABILITY_DELAY_MS = 30_000L
+  }
 
   @Volatile private var canvasHostUrl: String? = null
   @Volatile private var mainSessionKey: String? = null
@@ -177,6 +184,7 @@ class GatewaySession(
   ) {
     private val connectDeferred = CompletableDeferred<Unit>()
     private val closedDeferred = CompletableDeferred<Unit>()
+    private val stabilityDeferred = CompletableDeferred<Boolean>()
     private val isClosed = AtomicBoolean(false)
     private val connectNonceDeferred = CompletableDeferred<String?>()
     private val client: OkHttpClient = buildClient()
@@ -237,9 +245,20 @@ class GatewaySession(
       if (isClosed.compareAndSet(false, true)) {
         socket?.close(1000, "bye")
         socket = null
+        if (!stabilityDeferred.isCompleted) {
+          stabilityDeferred.complete(false)
+        }
         closedDeferred.complete(Unit)
       }
     }
+
+    fun markStable() {
+      if (!stabilityDeferred.isCompleted) {
+        stabilityDeferred.complete(true)
+      }
+    }
+
+    suspend fun awaitStability() = stabilityDeferred.await()
 
     private fun buildClient(): OkHttpClient {
       val builder = OkHttpClient.Builder()
@@ -278,6 +297,9 @@ class GatewaySession(
           connectDeferred.completeExceptionally(t)
         }
         if (isClosed.compareAndSet(false, true)) {
+          if (!stabilityDeferred.isCompleted) {
+            stabilityDeferred.complete(false)
+          }
           failPending()
           closedDeferred.complete(Unit)
           onDisconnected("Gateway error: ${t.message ?: t::class.java.simpleName}")
@@ -289,6 +311,9 @@ class GatewaySession(
           connectDeferred.completeExceptionally(IllegalStateException("Gateway closed: $reason"))
         }
         if (isClosed.compareAndSet(false, true)) {
+          if (!stabilityDeferred.isCompleted) {
+            stabilityDeferred.complete(false)
+          }
           failPending()
           closedDeferred.complete(Unit)
           onDisconnected("Gateway closed: $reason")
@@ -555,32 +580,6 @@ class GatewaySession(
       }
       pending.clear()
     }
-
-    /**
-     * Determines if an error is an authentication error that should trigger token clearing.
-     * Only clear tokens on auth failures, not network or server errors.
-     */
-    private fun isAuthError(code: String, message: String): Boolean {
-      val authCodes = setOf(
-        "UNAUTHORIZED",
-        "FORBIDDEN",
-        "AUTHENTICATION_FAILED",
-        "INVALID_TOKEN",
-        "DEVICE_NOT_APPROVED",
-        "PAIRING_REQUIRED"
-      )
-      if (code in authCodes) return true
-      val lowerMsg = message.lowercase()
-      val authPhrases = setOf(
-        "pairing required",
-        "not approved",
-        "invalid token",
-        "authentication failed",
-        "unauthorized",
-        "forbidden"
-      )
-      return authPhrases.any { lowerMsg.contains(it) }
-    }
   }
 
   private suspend fun runLoop() {
@@ -594,30 +593,56 @@ class GatewaySession(
         continue
       }
 
+      // Check max retry limit before attempting connection
+      if (attempt >= MAX_RETRY_ATTEMPTS) {
+        onMaxRetriesReached?.invoke()
+        onDisconnected("Connection failed: max retries exceeded")
+        // Stop retrying until explicitly reconnected
+        while (scope.isActive && desired != null) {
+          delay(1000)
+        }
+        continue
+      }
+
       try {
-        onDisconnected(if (attempt == 0) "Connecting…" else "Reconnecting…")
-        connectOnce(target)
-        attempt = 0
+        onConnecting?.invoke(attempt > 0)
+        val conn = connectOnce(target)
+
+        // Launch a coroutine to mark connection stable after delay
+        val stabilityJob = scope.launch {
+          delay(STABILITY_DELAY_MS)
+          conn.markStable()
+        }
+
+        // Wait for either stability or connection close
+        val stable = conn.awaitStability()
+        stabilityJob.cancel()
+
+        if (stable) {
+          // Connection was stable for 30 seconds, reset attempt counter
+          attempt = 0
+        }
+
+        // Wait for connection to close before retrying
+        conn.awaitClose()
       } catch (err: Throwable) {
         attempt += 1
         onDisconnected("Gateway error: ${err.message ?: err::class.java.simpleName}")
-        val sleepMs = minOf(8_000L, (350.0 * Math.pow(1.7, attempt.toDouble())).toLong())
+        val sleepMs = minOf(30_000L, 500L * (1 shl attempt.coerceAtMost(6)))
         delay(sleepMs)
+      } finally {
+        currentConnection = null
+        canvasHostUrl = null
+        mainSessionKey = null
       }
     }
   }
 
-  private suspend fun connectOnce(target: DesiredConnection) = withContext(Dispatchers.IO) {
+  private suspend fun connectOnce(target: DesiredConnection): Connection = withContext(Dispatchers.IO) {
     val conn = Connection(target.endpoint, target.token, target.password, target.options, target.tls)
     currentConnection = conn
-    try {
-      conn.connect()
-      conn.awaitClose()
-    } finally {
-      currentConnection = null
-      canvasHostUrl = null
-      mainSessionKey = null
-    }
+    conn.connect()
+    conn
   }
 
   private fun buildDeviceAuthPayload(
@@ -695,6 +720,32 @@ class GatewaySession(
     if (host == "::1") return true
     if (host == "0.0.0.0" || host == "::") return true
     return host.startsWith("127.")
+  }
+
+  /**
+   * Determines if an error is an authentication error that should trigger token clearing.
+   * Only clear tokens on auth failures, not network or server errors.
+   */
+  private fun isAuthError(code: String, message: String): Boolean {
+    val authCodes = setOf(
+      "UNAUTHORIZED",
+      "FORBIDDEN",
+      "AUTHENTICATION_FAILED",
+      "INVALID_TOKEN",
+      "DEVICE_NOT_APPROVED",
+      "PAIRING_REQUIRED"
+    )
+    if (code in authCodes) return true
+    val lowerMsg = message.lowercase()
+    val authPhrases = setOf(
+      "pairing required",
+      "not approved",
+      "invalid token",
+      "authentication failed",
+      "unauthorized",
+      "forbidden"
+    )
+    return authPhrases.any { lowerMsg.contains(it) }
   }
 }
 
