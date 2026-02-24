@@ -50,3 +50,12 @@
 # causing java.security.KeyStoreException: BKS not found at runtime.
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
+
+# Kotlinx Serialization
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class kotlinx.serialization.json.** { *; }
+-keepclassmembers class * {
+    @kotlinx.serialization.* <fields>;
+}
+-keep @kotlinx.serialization.Serializable class * { *; }
