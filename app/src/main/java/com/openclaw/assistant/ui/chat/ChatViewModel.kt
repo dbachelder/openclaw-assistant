@@ -62,7 +62,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val chatRepository = com.openclaw.assistant.data.repository.ChatRepository.getInstance(application)
     private val apiClient = OpenClawClient()
     private val nodeRuntime = (application as OpenClawApplication).nodeRuntime
-    private val speechManager = SpeechRecognizerManager(application)
+    private val speechManager by lazy { SpeechRecognizerManager(application, viewModelScope) }
     private val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
     private val useNodeChat: Boolean
         get() = settings.useNodeChat
