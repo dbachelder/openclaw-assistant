@@ -64,13 +64,14 @@ fun buildGatewayTlsConfig(
 
   val context = SSLContext.getInstance("TLS")
   context.init(null, arrayOf(trustManager), SecureRandom())
-  val verifier =
-    if (expected != null || params.allowTOFU) {
-      // When pinning, we intentionally ignore hostname mismatch (service discovery often yields IPs).
-      HostnameVerifier { _, _ -> true }
-    } else {
-      HttpsURLConnection.getDefaultHostnameVerifier()
+  val defaultVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
+  val pinningActive = expected != null || params.allowTOFU
+  val verifier = HostnameVerifier { hostname, session ->
+    when {
+      pinningActive && isIpAddress(hostname) -> true
+      else -> defaultVerifier.verify(hostname, session)
     }
+  }
   return GatewayTlsConfig(
     sslSocketFactory = context.socketFactory,
     trustManager = trustManager,
@@ -139,4 +140,16 @@ private fun normalizeFingerprint(raw: String): String {
   val stripped = raw.trim()
     .replace(Regex("^sha-?256\\s*:?\\s*", RegexOption.IGNORE_CASE), "")
   return stripped.lowercase(Locale.US).filter { it in '0'..'9' || it in 'a'..'f' }
+}
+
+private fun isIpAddress(host: String): Boolean {
+  return host.matches(Regex("""
+    ^(
+      (25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.
+      (25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.
+      (25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.
+      (25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)
+    |(\[[0-9a-fA-F:]+])
+    )$
+  """.trimIndent().replace(Regex("\\s+"), "")))
 }
