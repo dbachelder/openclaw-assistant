@@ -673,7 +673,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val cleanText = com.openclaw.assistant.speech.TTSUtils.stripMarkdownForSpeech(text)
         speakingJob = viewModelScope.launch {
             _uiState.update { it.copy(isSpeaking = true) }
-
             var success = false
             try {
                 success = if (isTTSReady && tts != null) {

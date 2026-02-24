@@ -398,7 +398,7 @@ class HotwordService : Service(), VoskRecognitionListener {
         }
     }
 
-    private fun copyAssets(): String? {
+    private suspend fun copyAssets(): String? = withContext(Dispatchers.IO) {
         val targetDir = java.io.File(filesDir, "model")
 
         val currentVersion = try {
@@ -417,7 +417,7 @@ class HotwordService : Service(), VoskRecognitionListener {
 
         if (!shouldCopyModel(currentVersion, savedVersion, targetDir.exists(), targetDir.list()?.isNotEmpty() == true)) {
             Log.d(TAG, "Model version $savedVersion matches current $currentVersion. Skipping copy.")
-            return targetDir.absolutePath
+            return@withContext targetDir.absolutePath
         }
 
         try {
@@ -429,7 +429,7 @@ class HotwordService : Service(), VoskRecognitionListener {
             val success = copyAssetFolder(assets, "model", targetDir.absolutePath)
             if (!success) {
                 Log.e(TAG, "Model copy failed - some files may not have copied successfully")
-                return null
+                return@withContext null
             }
 
             // Verify checksums of copied files
@@ -437,15 +437,15 @@ class HotwordService : Service(), VoskRecognitionListener {
             if (!checksumsValid) {
                 Log.e(TAG, "Model checksum verification failed - files may be corrupted")
                 targetDir.deleteRecursively()
-                return null
+                return@withContext null
             }
 
             prefs.edit().putInt("model_version", currentVersion).apply()
             Log.d(TAG, "Model copied and verified successfully")
-            return targetDir.absolutePath
+            return@withContext targetDir.absolutePath
         } catch (e: Exception) {
             Log.e(TAG, "Error during model copy: ${e.message}", e)
-            return null
+            return@withContext null
         }
     }
 
@@ -513,9 +513,9 @@ class HotwordService : Service(), VoskRecognitionListener {
         return result
     }
 
-    private fun copyAssetFolder(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
+    private suspend fun copyAssetFolder(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val files = assetManager.list(fromAssetPath) ?: return false
+            val files = assetManager.list(fromAssetPath) ?: return@withContext false
             java.io.File(toPath).mkdirs()
             var res = true
             for (file in files) {
@@ -525,13 +525,13 @@ class HotwordService : Service(), VoskRecognitionListener {
                     res = res and copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
                 }
             }
-            return res
+            return@withContext res
         } catch (e: Exception) {
-            return false
+            return@withContext false
         }
     }
 
-    private fun copyAsset(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
+    private suspend fun copyAsset(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean = withContext(Dispatchers.IO) {
         var inStream: java.io.InputStream? = null
         var outStream: java.io.OutputStream? = null
         try {
@@ -541,16 +541,16 @@ class HotwordService : Service(), VoskRecognitionListener {
             outStream = java.io.FileOutputStream(outFile)
             val bytesCopied = inStream.copyTo(outStream)
             Log.d(TAG, "Copied $fromAssetPath to $toPath ($bytesCopied bytes)")
-            return true
+            return@withContext true
         } catch (e: java.io.FileNotFoundException) {
             Log.e(TAG, "Asset not found: $fromAssetPath")
-            return false
+            return@withContext false
         } catch (e: java.io.IOException) {
             Log.e(TAG, "IO error copying $fromAssetPath: ${e.message}")
-            return false
+            return@withContext false
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error copying $fromAssetPath: ${e.message}")
-            return false
+            return@withContext false
         } finally {
             try { inStream?.close() } catch (_: Exception) {}
             try { outStream?.close() } catch (_: Exception) {}

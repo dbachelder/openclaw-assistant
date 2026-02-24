@@ -94,7 +94,7 @@ class CameraHandler(
         }
       // Upload file via HTTP instead of base64 through WebSocket
       clipLog("uploading via HTTP...")
-      return uploadClipWithFallback(filePayload, clipLog)
+      return uploadClipWithFallback(filePayload) { msg -> clipLog(msg) }
     } catch (err: Throwable) {
       clipLog("outer error: ${err::class.java.simpleName}: ${err.message}")
       clipLog("stack: ${err.stackTraceToString().take(2000)}")

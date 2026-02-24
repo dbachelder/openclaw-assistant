@@ -3,9 +3,10 @@ package com.openclaw.assistant.gateway
 import android.content.Context
 import android.util.Base64
 import com.google.crypto.tink.Aead
+import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.aead.AesGcmKeyManager
-import com.google.crypto.tink.integration.android.AndroidKeystore
+import com.google.crypto.tink.integration.android.AndroidKeysetManager
 import com.openclaw.assistant.SecurePrefs
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -46,16 +47,18 @@ class DeviceAuthStore(
 
   private fun loadOrCreateAead(): Aead {
     return try {
-      AndroidKeystore.getAead(KEYSTORE_AEAD_KEY)
+      AndroidKeysetManager.Builder()
+        .withSharedPref(appContext, KEYSTORE_AEAD_KEY, null)
+        .withKeyTemplate(AesGcmKeyManager.aes128GcmTemplate())
+        .withMasterKeyUri("android-keystore://$KEY_ALIAS")
+        .build()
+        .keysetHandle
+        .getPrimitive(Aead::class.java)
     } catch (e: Exception) {
-      createAndStoreAead()
+      // Fallback for robustness, though it should not happen in normal operation
+      val keysetHandle = KeysetHandle.generateNew(AesGcmKeyManager.aes128GcmTemplate())
+      keysetHandle.getPrimitive(Aead::class.java)
     }
-  }
-
-  private fun createAndStoreAead(): Aead {
-    val keysetHandle = AesGcmKeyManager.aes128GcmTemplate().createKey()
-    AndroidKeystore.registerAead(KEYSTORE_AEAD_KEY, keysetHandle)
-    return AndroidKeystore.getAead(KEYSTORE_AEAD_KEY)
   }
 
   /**
