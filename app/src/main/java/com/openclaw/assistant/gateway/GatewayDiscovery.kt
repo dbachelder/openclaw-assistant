@@ -269,10 +269,12 @@ class GatewayDiscovery(
             val msg = lookupUnicastMessage(instanceFqdn, Type.SRV)
             if (msg == null) {
               Log.w(logTag, "DNS SRV lookup failed for $instanceFqdn")
+              null
+            } else {
+              recordByName(msg, instanceFqdn, Type.SRV) as? SRVRecord
             }
-            recordByName(msg, instanceFqdn, Type.SRV) as? SRVRecord
           }
-          ?: continue
+      if (srv == null) continue
       val port = srv.port
       if (port <= 0) continue
 
@@ -281,10 +283,10 @@ class GatewayDiscovery(
         resolveHostFromMessage(ptrMsg, targetFqdn)
           ?: resolveHostFromMessage(lookupUnicastMessage(instanceFqdn, Type.SRV), targetFqdn)
           ?: resolveHostUnicast(targetFqdn)
-          ?: run {
-            Log.w(logTag, "Could not resolve host for $targetFqdn")
-            continue
-          }
+      if (host == null) {
+        Log.w(logTag, "Could not resolve host for $targetFqdn")
+        continue
+      }
 
       val txtFromPtr =
         recordsByName(ptrMsg, Section.ADDITIONAL)[keyName(instanceFqdn)]
