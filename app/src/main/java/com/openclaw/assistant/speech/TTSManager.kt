@@ -111,7 +111,9 @@ class TTSManager(private val context: Context) {
 
     private suspend fun speakSingleChunk(text: String, isFirst: Boolean): Boolean {
         // Scale timeout based on text length (minimum 30s, ~15s per 1000 chars)
-        val timeoutMs = (30_000L + (text.length * 15L)).coerceAtMost(120_000L)
+        // Cap length before multiplication to prevent overflow with malicious input
+        val safeLength = text.length.coerceAtMost(1_000_000)
+        val timeoutMs = (30_000L + (safeLength * 15L)).coerceAtMost(120_000L)
         val result = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 val utteranceId = UUID.randomUUID().toString()

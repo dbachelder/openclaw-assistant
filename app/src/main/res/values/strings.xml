@@ -213,6 +213,7 @@
     <string name="permission_camera">Camera</string>
     <string name="permission_location_fine">Precise Location</string>
     <string name="permission_location_coarse">Coarse Location</string>
+    <string name="permission_location_background">Background Location</string>
     <string name="permission_notifications">Notifications</string>
 
     <!-- Fix Request -->
@@ -315,6 +316,14 @@
     <string name="location_info_title">Location Accuracy Modes</string>
     <string name="location_info_message">Off: AI cannot access your location.\n\nCoarse: City/neighborhood level. Uses less battery.\n\nPrecise: GPS accuracy. Higher battery usage.\n\nLong-press this card to see this info again.</string>
 
+    <!-- Background Location Permission -->
+    <string name="location_background_permission_title">Background Location Required</string>
+    <string name="location_background_permission_message">To share your location when the app is in the background, Android requires you to enable "Allow all the time" location permission.\n\nThis lets the AI access your location for background tasks like navigation assistance or location-based reminders.</string>
+    <string name="location_background_permission_settings">Open Location Settings</string>
+    <string name="location_background_permission_use_while">Use While in App Only</string>
+    <string name="location_background_rationale_title">Why Background Location?</string>
+    <string name="location_background_rationale_message">OpenClaw can access your location even when the app is closed to support features like:\n• Navigation assistance\n• Location-based reminders\n• Automatic check-ins\n\nYou can change this anytime in system Settings.</string>
+
     <!-- App Version -->
     <string name="app_version">Version %s</string>
 
@@ -371,4 +380,15 @@
     <string name="update_available">New version (%s) available</string>
     <string name="up_to_date">App is up to date</string>
     <string name="update_action">Update</string>
+
+    <!-- Chat Loading States -->
+    <string name="empty_chat_title">Start a conversation</string>
+    <string name="empty_chat_subtitle">Ask OpenClaw anything to get started</string>
+    <string name="start_conversation">Start conversation</string>
+    <string name="error_loading_messages">Failed to load messages</string>
+    <string name="retry_button">Retry</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_reconnecting">Reconnecting…</string>
 </resources>

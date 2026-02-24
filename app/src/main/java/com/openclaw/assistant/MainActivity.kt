@@ -234,6 +234,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         list.add(PermissionStatusInfo(getString(R.string.permission_camera), ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED))
         list.add(PermissionStatusInfo(getString(R.string.permission_location_fine), ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED))
         list.add(PermissionStatusInfo(getString(R.string.permission_location_coarse), ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            list.add(PermissionStatusInfo(getString(R.string.permission_location_background), ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED))
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             list.add(PermissionStatusInfo(getString(R.string.permission_notifications), ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED))
         }
@@ -350,6 +353,54 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         startActivity(intent)
     }
 
+    /**
+     * Opens system location settings for this app.
+     * Used when requesting background location permission (Android 10+),
+     * as background location must be granted via system settings.
+     */
+    fun openLocationSettings() {
+        val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+        startActivity(intent)
+    }
+
+    /**
+     * Checks if background location permission is granted.
+     * On Android 10+ (API 29+), this checks for ACCESS_BACKGROUND_LOCATION.
+     */
+    fun hasBackgroundLocationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            // Pre-Android 10, background location is included with foreground permissions
+            true
+        }
+    }
+
+    /**
+     * Shows an educational dialog explaining why background location is needed,
+     * then directs the user to system settings to grant the permission.
+     * If user declines, gracefully degrades to WhileUsing mode.
+     */
+    fun showBackgroundLocationRationale(
+        onProceedToSettings: () -> Unit,
+        onUseWhileInAppOnly: () -> Unit,
+    ) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.location_background_rationale_title))
+            .setMessage(getString(R.string.location_background_rationale_message))
+            .setPositiveButton(getString(R.string.location_background_permission_settings)) { _, _ ->
+                onProceedToSettings()
+            }
+            .setNegativeButton(getString(R.string.location_background_permission_use_while)) { _, _ ->
+                onUseWhileInAppOnly()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     fun isAssistantActive(): Boolean {
         return try {
             Settings.Secure.getString(contentResolver, "assistant")?.contains(packageName) == true
@@ -394,6 +445,9 @@ fun MainScreen(
     var showTroubleshooting by rememberSaveable { mutableStateOf(false) }
     var showHowToUse by rememberSaveable { mutableStateOf(false) }
     var showLocationInfo by rememberSaveable { mutableStateOf(false) }
+    var showLocationModeDialog by rememberSaveable { mutableStateOf(false) }
+    var showBackgroundLocationRationaleDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingLocationMode by rememberSaveable { mutableStateOf<LocationMode?>(null) }
     
     var showScreenCaptureDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -560,6 +614,7 @@ fun MainScreen(
                 // Location Toggle (ON/OFF)
                 val locationStatusText = when {
                     locationMode == LocationMode.Off -> stringResource(R.string.location_off)
+                    locationMode == LocationMode.Always -> stringResource(R.string.wake_word_node_always)
                     locationPrecise -> stringResource(R.string.location_precise)
                     else -> stringResource(R.string.location_coarse)
                 }
@@ -569,25 +624,31 @@ fun MainScreen(
                     isActive = locationMode != LocationMode.Off,
                     statusText = locationStatusText,
                     onClick = {
-                        if (locationMode == LocationMode.Off) {
-                            val coarseGranted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.ACCESS_COARSE_LOCATION
-                            ) == PackageManager.PERMISSION_GRANTED
-                            val fineGranted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.ACCESS_FINE_LOCATION
-                            ) == PackageManager.PERMISSION_GRANTED
-                            
-                            if (coarseGranted || fineGranted) {
-                                runtime.setLocationMode(LocationMode.WhileUsing)
-                                runtime.setLocationPreciseEnabled(fineGranted)
-                            } else {
-                                onRequestPermissions(listOf(
-                                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                                    Manifest.permission.ACCESS_FINE_LOCATION
-                                ))
+                        when (locationMode) {
+                            LocationMode.Off -> {
+                                val coarseGranted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.ACCESS_COARSE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED
+                                val fineGranted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.ACCESS_FINE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED
+                                
+                                if (coarseGranted || fineGranted) {
+                                    runtime.setLocationMode(LocationMode.WhileUsing)
+                                    runtime.setLocationPreciseEnabled(fineGranted)
+                                } else {
+                                    onRequestPermissions(listOf(
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        Manifest.permission.ACCESS_FINE_LOCATION
+                                    ))
+                                }
                             }
-                        } else {
-                            runtime.setLocationMode(LocationMode.Off)
+                            LocationMode.WhileUsing -> {
+                                showLocationModeDialog = true
+                            }
+                            LocationMode.Always -> {
+                                runtime.setLocationMode(LocationMode.Off)
+                            }
                         }
                     },
                     onLongClick = { showLocationInfo = true },
@@ -749,6 +810,96 @@ fun MainScreen(
                 }
             }
         )
+    }
+
+    // Location Mode Selection Dialog (WhileUsing -> Always)
+    if (showLocationModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocationModeDialog = false },
+            title = { Text(stringResource(R.string.capability_location)) },
+            text = { Text(stringResource(R.string.location_background_rationale_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLocationModeDialog = false
+                        pendingLocationMode = LocationMode.Always
+                        val activity = context as? MainActivity
+                        if (activity != null && !activity.hasBackgroundLocationPermission()) {
+                            showBackgroundLocationRationaleDialog = true
+                        } else {
+                            runtime.setLocationMode(LocationMode.Always)
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.wake_word_node_always))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showLocationModeDialog = false
+                        runtime.setLocationMode(LocationMode.Off)
+                    }
+                ) {
+                    Text(stringResource(R.string.location_off))
+                }
+            }
+        )
+    }
+
+    // Background Location Permission Rationale Dialog
+    if (showBackgroundLocationRationaleDialog) {
+        val activity = context as? MainActivity
+        AlertDialog(
+            onDismissRequest = { 
+                showBackgroundLocationRationaleDialog = false
+                pendingLocationMode = null
+            },
+            title = { Text(stringResource(R.string.location_background_permission_title)) },
+            text = { Text(stringResource(R.string.location_background_permission_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showBackgroundLocationRationaleDialog = false
+                        activity?.openLocationSettings()
+                    }
+                ) {
+                    Text(stringResource(R.string.location_background_permission_settings))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showBackgroundLocationRationaleDialog = false
+                        pendingLocationMode = null
+                        runtime.setLocationMode(LocationMode.WhileUsing)
+                    }
+                ) {
+                    Text(stringResource(R.string.location_background_permission_use_while))
+                }
+            }
+        )
+    }
+
+    // Check if background permission was granted when returning from settings
+    DisposableEffect(Unit) {
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val activity = context as? MainActivity
+                if (activity != null && pendingLocationMode == LocationMode.Always) {
+                    if (activity.hasBackgroundLocationPermission()) {
+                        runtime.setLocationMode(LocationMode.Always)
+                    } else {
+                        runtime.setLocationMode(LocationMode.WhileUsing)
+                    }
+                    pendingLocationMode = null
+                }
+            }
+        }
+        (context as? MainActivity)?.lifecycle?.addObserver(lifecycleObserver)
+        onDispose {
+            (context as? MainActivity)?.lifecycle?.removeObserver(lifecycleObserver)
+        }
     }
 }
 

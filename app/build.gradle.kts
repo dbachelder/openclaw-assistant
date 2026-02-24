@@ -49,7 +49,7 @@ android {
     defaultConfig {
         applicationId = "com.openclaw.assistant"
         minSdk = 31
-        targetSdk = 34
+        targetSdk = 35
         versionCode = getTagVersionCode()
         versionName = getTagName()
 
@@ -82,6 +82,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = true
+            buildConfigField("boolean", "FIREBASE_ENABLED", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -89,6 +90,7 @@ android {
         }
         release {
             isMinifyEnabled = true
+            buildConfigField("boolean", "FIREBASE_ENABLED", "true")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
