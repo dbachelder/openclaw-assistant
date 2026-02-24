@@ -587,8 +587,17 @@ class GatewaySession(
     }
   }
 
+  companion object {
+    private const val STABLE_CONNECTION_MS = 30_000L
+    private const val MAX_RETRY_ATTEMPTS = 10
+    private const val BASE_BACKOFF_MS = 350L
+    private const val BACKOFF_MULTIPLIER = 1.7
+    private const val MAX_BACKOFF_MS = 8_000L
+  }
+
   private suspend fun runLoop() {
     var attempt = 0
+    var isFirstConnection = true
     while (scope.isActive) {
       val target = desired
       if (target == null) {
@@ -598,25 +607,74 @@ class GatewaySession(
         continue
       }
 
+      // Check max retry limit before attempting connection
+      if (attempt >= MAX_RETRY_ATTEMPTS) {
+        onDisconnected("Connection failed after $MAX_RETRY_ATTEMPTS attempts. Please check your gateway settings and try again.")
+        desired = null
+        break
+      }
+
+      // Only notify about disconnection for reconnection attempts, not initial connection
+      if (attempt > 0 || !isFirstConnection) {
+        onDisconnected(if (attempt == 0) "Connecting…" else "Reconnecting… (attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS)")
+      }
+
       try {
-        onDisconnected(if (attempt == 0) "Connecting…" else "Reconnecting…")
-        connectOnce(target)
-        attempt = 0
+        val connectionStable = CompletableDeferred<Boolean>()
+        connectOnce(target, connectionStable)
+
+        // Only reset attempt counter if connection was stable for the required period
+        val wasStable = connectionStable.await()
+        if (wasStable) {
+          attempt = 0
+          isFirstConnection = false
+        } else {
+          // Connection closed before stability period - treat as failure
+          attempt += 1
+          onDisconnected("Connection lost before stabilizing")
+          val sleepMs = minOf(MAX_BACKOFF_MS, (BASE_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt.toDouble())).toLong())
+          delay(sleepMs)
+        }
       } catch (err: Throwable) {
         attempt += 1
         onDisconnected("Gateway error: ${err.message ?: err::class.java.simpleName}")
-        val sleepMs = minOf(8_000L, (350.0 * Math.pow(1.7, attempt.toDouble())).toLong())
+        val sleepMs = minOf(MAX_BACKOFF_MS, (BASE_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt.toDouble())).toLong())
         delay(sleepMs)
       }
     }
   }
 
-  private suspend fun connectOnce(target: DesiredConnection) = withContext(Dispatchers.IO) {
+  private suspend fun connectOnce(target: DesiredConnection, connectionStable: CompletableDeferred<Boolean>) = withContext(Dispatchers.IO) {
     val conn = Connection(target.endpoint, target.token, target.password, target.options, target.tls)
     currentConnection = conn
     try {
       conn.connect()
+
+      // Launch a job to verify connection stability
+      val stabilityJob = launch {
+        try {
+          // Wait for the stable connection period to confirm connection is healthy
+          delay(STABLE_CONNECTION_MS)
+          // If we reach here without cancellation, connection is stable
+          connectionStable.complete(true)
+        } catch (_: kotlinx.coroutines.CancellationException) {
+          // Connection closed before stability period - connection was not stable
+          connectionStable.complete(false)
+        }
+      }
+
+      // Wait for connection to close (either normally or due to error)
       conn.awaitClose()
+
+      // Cancel stability check if still running
+      stabilityJob.cancel()
+      stabilityJob.join()
+    } catch (err: Throwable) {
+      // Connection failed - ensure we signal that connection was not stable
+      if (!connectionStable.isCompleted) {
+        connectionStable.complete(false)
+      }
+      throw err
     } finally {
       currentConnection = null
       canvasHostUrl = null
