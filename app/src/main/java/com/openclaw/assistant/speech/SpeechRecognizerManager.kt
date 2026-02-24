@@ -45,16 +45,23 @@ class SpeechRecognizerManager(private val context: Context) {
         // Reuse existing recognizer or create new one if needed
         if (recognizer == null) {
             // Ensure creation on Main thread
-            withContext(Dispatchers.Main) {
-                if (recognizer == null && SpeechRecognizer.isRecognitionAvailable(context)) {
-                    val appContext = context.applicationContext
-                    val serviceComponent = findRecognitionService(appContext)
-                    recognizer = if (serviceComponent != null) {
-                        SpeechRecognizer.createSpeechRecognizer(appContext, serviceComponent)
-                    } else {
-                        SpeechRecognizer.createSpeechRecognizer(appContext)
+            try {
+                withContext(Dispatchers.Main) {
+                    if (recognizer == null && SpeechRecognizer.isRecognitionAvailable(context)) {
+                        val appContext = context.applicationContext
+                        val serviceComponent = findRecognitionService(appContext)
+                        recognizer = if (serviceComponent != null) {
+                            SpeechRecognizer.createSpeechRecognizer(appContext, serviceComponent)
+                        } else {
+                            SpeechRecognizer.createSpeechRecognizer(appContext)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("SpeechRecognizerManager", "Failed to create speech recognizer", e)
+                trySend(SpeechResult.Error(context.getString(com.openclaw.assistant.R.string.error_speech_client)))
+                close()
+                return@callbackFlow
             }
         }
 
@@ -153,14 +160,23 @@ class SpeechRecognizerManager(private val context: Context) {
         }
 
         // Run on Main thread
-        Dispatchers.Main.dispatch(kotlin.coroutines.EmptyCoroutineContext, Runnable {
-             try {
-                 currentRecognizer.startListening(intent)
-             } catch (e: Exception) {
-                 trySend(SpeechResult.Error(context.getString(com.openclaw.assistant.R.string.error_start_failed, e.message)))
-                 close()
-             }
-        })
+        try {
+            Dispatchers.Main.dispatch(kotlin.coroutines.EmptyCoroutineContext, Runnable {
+                 try {
+                     currentRecognizer.startListening(intent)
+                 } catch (e: Exception) {
+                     android.util.Log.e("SpeechRecognizerManager", "startListening failed", e)
+                     trySend(SpeechResult.Error(context.getString(com.openclaw.assistant.R.string.error_start_failed, e.message)))
+                     close()
+                 }
+            })
+        } catch (e: Exception) {
+            // Handle dispatcher failure (e.g., main thread shutting down)
+            android.util.Log.e("SpeechRecognizerManager", "Failed to dispatch to main thread", e)
+            trySend(SpeechResult.Error(context.getString(com.openclaw.assistant.R.string.error_speech_client)))
+            close()
+            return@callbackFlow
+        }
 
         awaitClose {
             // Use GlobalScope to ensure cleanup runs even if flow scope is cancelled
@@ -169,7 +185,10 @@ class SpeechRecognizerManager(private val context: Context) {
             GlobalScope.launch(Dispatchers.Main) {
                 try {
                     // Cancel only - do NOT destroy to allow reuse
-                    currentRecognizer.cancel()
+                    // Check recognizer is still the same instance before cancelling
+                    if (recognizer === currentRecognizer) {
+                        currentRecognizer.cancel()
+                    }
                 } catch (e: Exception) {
                     // Ignore
                 }

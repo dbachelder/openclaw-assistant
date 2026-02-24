@@ -546,7 +546,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     Log.e(TAG, "Starting speechManager.startListening(), isListening=true")
                     _uiState.update { it.copy(isListening = true, partialText = "") }
 
-                    speechManager.startListening(settings.speechLanguage.ifEmpty { null }, settings.speechSilenceTimeout).collect { result ->
+                    val flow = try {
+                        speechManager.startListening(settings.speechLanguage.ifEmpty { null }, settings.speechSilenceTimeout)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start speech recognition", e)
+                        _uiState.update { it.copy(isListening = false, error = e.message ?: "Speech recognition failed") }
+                        lastInputWasVoice = false
+                        hasActuallySpoken = true
+                        break
+                    }
+
+                    flow.collect { result ->
                         Log.e(TAG, "SpeechResult: $result")
                         when (result) {
                             is SpeechResult.Ready -> {
