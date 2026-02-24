@@ -108,7 +108,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
              Log.w(TAG, "Lifecycle ON_CREATE failed", e)
         }
 
-        speechManager = SpeechRecognizerManager(context)
+        speechManager = SpeechRecognizerManager(context, scope)
         ttsManager = TTSManager(context)
         Log.e(TAG, "Session onCreate completed")
     }
@@ -176,7 +176,7 @@ class OpenClawSession(context: Context) : VoiceInteractionSession(context),
                 Log.w(TAG, "Failed to destroy existing SpeechRecognizerManager before recreation", e)
             }
         }
-        speechManager = SpeechRecognizerManager(context)
+        speechManager = SpeechRecognizerManager(context, scope)
 
         lifecycleRegistry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_RESUME)

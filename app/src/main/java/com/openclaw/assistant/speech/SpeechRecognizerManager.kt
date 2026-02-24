@@ -15,13 +15,21 @@ import kotlinx.coroutines.flow.callbackFlow
 import java.util.Locale
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
  * Speech Recognition Manager
+ *
+ * @param context The application context
+ * @param scope The CoroutineScope for cleanup operations. Should be tied to the lifecycle
+ *              of the component using this manager (e.g., viewModelScope for ViewModels,
+ *              or a scope with SupervisorJob for Services) to prevent memory leaks.
  */
-class SpeechRecognizerManager(private val context: Context) {
+class SpeechRecognizerManager(
+    private val context: Context,
+    private val scope: CoroutineScope
+) {
 
     private var recognizer: SpeechRecognizer? = null
 
@@ -163,10 +171,10 @@ class SpeechRecognizerManager(private val context: Context) {
         })
 
         awaitClose {
-            // Use GlobalScope to ensure cleanup runs even if flow scope is cancelled
-            // But we must be careful not to leak. Dispatchers.Main is fine.
-            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-            GlobalScope.launch(Dispatchers.Main) {
+            // Use the provided scope for cleanup to ensure it respects lifecycle
+            // When the parent scope is cancelled, this cleanup will be cancelled too,
+            // preventing memory leaks from dangling coroutines.
+            scope.launch(Dispatchers.Main) {
                 try {
                     // Cancel only - do NOT destroy to allow reuse
                     currentRecognizer.cancel()
