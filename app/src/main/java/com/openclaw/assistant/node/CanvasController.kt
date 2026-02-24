@@ -2,6 +2,7 @@ package com.openclaw.assistant.node
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.Uri
 import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
@@ -47,7 +48,14 @@ class CanvasController {
 
   fun navigate(url: String) {
     val trimmed = url.trim()
-    this.url = if (trimmed.isBlank() || trimmed == "/") null else trimmed
+    if (trimmed.isBlank() || trimmed == "/") {
+      this.url = null
+    } else {
+      val uri = Uri.parse(trimmed)
+      val scheme = uri.scheme?.lowercase()
+      require(scheme in ALLOWED_SCHEMES) { "Invalid URL scheme: $scheme" }
+      this.url = trimmed
+    }
     reload()
   }
 
@@ -184,6 +192,8 @@ class CanvasController {
     }
 
   companion object {
+    private val ALLOWED_SCHEMES = listOf("http", "https")
+
     data class SnapshotParams(val format: SnapshotFormat, val quality: Double?, val maxWidth: Int?)
 
     fun parseNavigateUrl(paramsJson: String?): String {
