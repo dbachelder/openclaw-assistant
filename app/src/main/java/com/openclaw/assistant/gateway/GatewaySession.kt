@@ -61,6 +61,8 @@ class GatewaySession(
   private val onEvent: (event: String, payloadJson: String?) -> Unit,
   private val onInvoke: (suspend (InvokeRequest) -> InvokeResult)? = null,
   private val onTlsFingerprint: ((stableId: String, fingerprint: String) -> Unit)? = null,
+  private val onConnecting: ((isReconnect: Boolean) -> Unit)? = null,
+  private val onMaxRetriesReached: (() -> Unit)? = null,
 ) {
   data class InvokeRequest(
     val id: String,
@@ -83,6 +85,11 @@ class GatewaySession(
   private val json = Json { ignoreUnknownKeys = true }
   private val writeLock = Mutex()
   private val pending = ConcurrentHashMap<String, CompletableDeferred<RpcResponse>>()
+
+  companion object {
+    private const val MAX_RETRY_ATTEMPTS = 10
+    private const val STABILITY_DELAY_MS = 30_000L
+  }
 
   @Volatile private var canvasHostUrl: String? = null
   @Volatile private var mainSessionKey: String? = null
@@ -177,6 +184,7 @@ class GatewaySession(
   ) {
     private val connectDeferred = CompletableDeferred<Unit>()
     private val closedDeferred = CompletableDeferred<Unit>()
+    private val stabilityDeferred = CompletableDeferred<Boolean>()
     private val isClosed = AtomicBoolean(false)
     private val connectNonceDeferred = CompletableDeferred<String?>()
     private val client: OkHttpClient = buildClient()
@@ -237,9 +245,20 @@ class GatewaySession(
       if (isClosed.compareAndSet(false, true)) {
         socket?.close(1000, "bye")
         socket = null
+        if (!stabilityDeferred.isCompleted) {
+          stabilityDeferred.complete(false)
+        }
         closedDeferred.complete(Unit)
       }
     }
+
+    fun markStable() {
+      if (!stabilityDeferred.isCompleted) {
+        stabilityDeferred.complete(true)
+      }
+    }
+
+    suspend fun awaitStability() = stabilityDeferred.await()
 
     private fun buildClient(): OkHttpClient {
       val builder = OkHttpClient.Builder()
@@ -278,6 +297,9 @@ class GatewaySession(
           connectDeferred.completeExceptionally(t)
         }
         if (isClosed.compareAndSet(false, true)) {
+          if (!stabilityDeferred.isCompleted) {
+            stabilityDeferred.complete(false)
+          }
           failPending()
           closedDeferred.complete(Unit)
           onDisconnected("Gateway error: ${t.message ?: t::class.java.simpleName}")
@@ -289,6 +311,9 @@ class GatewaySession(
           connectDeferred.completeExceptionally(IllegalStateException("Gateway closed: $reason"))
         }
         if (isClosed.compareAndSet(false, true)) {
+          if (!stabilityDeferred.isCompleted) {
+            stabilityDeferred.complete(false)
+          }
           failPending()
           closedDeferred.complete(Unit)
           onDisconnected("Gateway closed: $reason")
@@ -307,13 +332,10 @@ class GatewaySession(
       val res = request("connect", payload, timeoutMs = 8_000)
       if (!res.ok) {
         val msg = res.error?.message ?: "connect failed"
-        val code = res.error?.code ?: "UNAVAILABLE"
-        // Only clear the stored token on authentication errors, not network/server errors.
-        // This prevents unnecessary re-pairing after transient failures.
-        if (canFallbackToShared && isAuthError(code, msg)) {
+        if (canFallbackToShared) {
           deviceAuthStore.clearToken(identityId, options.role)
         }
-        throw IllegalStateException("$code: $msg")
+        throw IllegalStateException(msg)
       }
       val payloadJson = res.payloadJson ?: throw IllegalStateException("connect failed: missing payload")
       val obj = json.parseToJsonElement(payloadJson).asObjectOrNull() ?: throw IllegalStateException("connect failed")
@@ -383,11 +405,7 @@ class GatewaySession(
           token = if (authToken.isNotEmpty()) authToken else null,
           nonce = connectNonce,
         )
-      val signature = try {
-        identityStore.signPayload(payload, identity)
-      } catch (e: IllegalStateException) {
-        null
-      }
+      val signature = identityStore.signPayload(payload, identity)
       val publicKey = identityStore.publicKeyBase64Url(identity)
       val deviceJson =
         if (!signature.isNullOrBlank() && !publicKey.isNullOrBlank()) {
@@ -559,45 +577,10 @@ class GatewaySession(
       }
       pending.clear()
     }
-
-    /**
-     * Determines if an error is an authentication error that should trigger token clearing.
-     * Only clear tokens on auth failures, not network or server errors.
-     */
-    private fun isAuthError(code: String, message: String): Boolean {
-      val authCodes = setOf(
-        "UNAUTHORIZED",
-        "FORBIDDEN",
-        "AUTHENTICATION_FAILED",
-        "INVALID_TOKEN",
-        "DEVICE_NOT_APPROVED",
-        "PAIRING_REQUIRED"
-      )
-      if (code in authCodes) return true
-      val lowerMsg = message.lowercase()
-      val authPhrases = setOf(
-        "pairing required",
-        "not approved",
-        "invalid token",
-        "authentication failed",
-        "unauthorized",
-        "forbidden"
-      )
-      return authPhrases.any { lowerMsg.contains(it) }
-    }
-  }
-
-  companion object {
-    private const val STABLE_CONNECTION_MS = 30_000L
-    private const val MAX_RETRY_ATTEMPTS = 10
-    private const val BASE_BACKOFF_MS = 350L
-    private const val BACKOFF_MULTIPLIER = 1.7
-    private const val MAX_BACKOFF_MS = 8_000L
   }
 
   private suspend fun runLoop() {
     var attempt = 0
-    var isFirstConnection = true
     while (scope.isActive) {
       val target = desired
       if (target == null) {
@@ -609,77 +592,54 @@ class GatewaySession(
 
       // Check max retry limit before attempting connection
       if (attempt >= MAX_RETRY_ATTEMPTS) {
-        onDisconnected("Connection failed after $MAX_RETRY_ATTEMPTS attempts. Please check your gateway settings and try again.")
-        desired = null
-        break
-      }
-
-      // Only notify about disconnection for reconnection attempts, not initial connection
-      if (attempt > 0 || !isFirstConnection) {
-        onDisconnected(if (attempt == 0) "Connecting…" else "Reconnecting… (attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS)")
+        onMaxRetriesReached?.invoke()
+        onDisconnected("Connection failed: max retries exceeded")
+        // Stop retrying until explicitly reconnected
+        while (scope.isActive && desired != null) {
+          delay(1000)
+        }
+        continue
       }
 
       try {
-        val connectionStable = CompletableDeferred<Boolean>()
-        connectOnce(target, connectionStable)
+        onConnecting?.invoke(attempt > 0)
+        val conn = connectOnce(target)
 
-        // Only reset attempt counter if connection was stable for the required period
-        val wasStable = connectionStable.await()
-        if (wasStable) {
-          attempt = 0
-          isFirstConnection = false
-        } else {
-          // Connection closed before stability period - treat as failure
-          attempt += 1
-          onDisconnected("Connection lost before stabilizing")
-          val sleepMs = minOf(MAX_BACKOFF_MS, (BASE_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt.toDouble())).toLong())
-          delay(sleepMs)
+        // Launch a coroutine to mark connection stable after delay
+        val stabilityJob = scope.launch {
+          delay(STABILITY_DELAY_MS)
+          conn.markStable()
         }
+
+        // Wait for either stability or connection close
+        val stable = conn.awaitStability()
+        stabilityJob.cancel()
+
+        if (stable) {
+          // Connection was stable for 30 seconds, reset attempt counter
+          attempt = 0
+        }
+
+        // Wait for connection to close before retrying
+        conn.awaitClose()
       } catch (err: Throwable) {
         attempt += 1
         onDisconnected("Gateway error: ${err.message ?: err::class.java.simpleName}")
-        val sleepMs = minOf(MAX_BACKOFF_MS, (BASE_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt.toDouble())).toLong())
+        val sleepMs = minOf(30_000L, 500L * (1 shl attempt.coerceAtMost(6)))
         delay(sleepMs)
+      } finally {
+        currentConnection = null
+        canvasHostUrl = null
+        mainSessionKey = null
       }
     }
   }
 
-  private suspend fun connectOnce(target: DesiredConnection, connectionStable: CompletableDeferred<Boolean>) = withContext(Dispatchers.IO) {
+  private suspend fun connectOnce(target: DesiredConnection): Connection = withContext(Dispatchers.IO) {
     val conn = Connection(target.endpoint, target.token, target.password, target.options, target.tls)
     currentConnection = conn
-    try {
-      conn.connect()
-
-      // Launch a job to verify connection stability
-      val stabilityJob = launch {
-        try {
-          // Wait for the stable connection period to confirm connection is healthy
-          delay(STABLE_CONNECTION_MS)
-          // If we reach here without cancellation, connection is stable
-          connectionStable.complete(true)
-        } catch (_: kotlinx.coroutines.CancellationException) {
-          // Connection closed before stability period - connection was not stable
-          connectionStable.complete(false)
-        }
-      }
-
-      // Wait for connection to close (either normally or due to error)
-      conn.awaitClose()
-
-      // Cancel stability check if still running
-      stabilityJob.cancel()
-      stabilityJob.join()
-    } catch (err: Throwable) {
-      // Connection failed - ensure we signal that connection was not stable
-      if (!connectionStable.isCompleted) {
-        connectionStable.complete(false)
-      }
-      throw err
-    } finally {
-      currentConnection = null
-      canvasHostUrl = null
-      mainSessionKey = null
-    }
+    conn.connect()
+    conn
   }
 
   private fun buildDeviceAuthPayload(
