@@ -317,10 +317,14 @@ class HotwordService : Service(), VoskRecognitionListener {
             try {
                 val modelPath = copyAssets()
                 if (modelPath != null) {
+                    Log.d(TAG, "Loading Vosk model from: $modelPath")
                     model = Model(modelPath)
+                    Log.d(TAG, "Vosk model loaded successfully")
                     withContext(Dispatchers.Main) {
                         if (!isSessionActive) startHotwordListening()
                     }
+                } else {
+                    Log.e(TAG, "Failed to copy Vosk model assets")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -501,7 +505,27 @@ class HotwordService : Service(), VoskRecognitionListener {
         }
     }
 
-    override fun onPartialResult(hypothesis: String?) {}
+    override fun onPartialResult(hypothesis: String?) {
+        if (isListeningForCommand || isSessionActive) return
+        hypothesis?.let {
+            try {
+                val json = JSONObject(it)
+                val text = json.optString("partial", "")
+
+                // Check against configured wake words (case-insensitive)
+                val wakeWords = settings.getWakeWords()
+                val normalizedText = text.lowercase()
+                val detected = wakeWords.any { word -> normalizedText.contains(word) }
+
+                if (detected) {
+                    Log.d(TAG, "Hotword detected in partial result! Text: $text")
+                    onHotwordDetected()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse Vosk partial result: $it", e)
+            }
+        }
+    }
 
     override fun onResult(hypothesis: String?) {
         if (isListeningForCommand || isSessionActive) return
@@ -510,18 +534,18 @@ class HotwordService : Service(), VoskRecognitionListener {
                 val json = JSONObject(it)
                 val text = json.optString("text", "")
 
-                // Check against configured wake words
+                // Check against configured wake words (case-insensitive)
                 val wakeWords = settings.getWakeWords()
-                val detected = wakeWords.any { word -> text.contains(word) }
+                val normalizedText = text.lowercase()
+                val detected = wakeWords.any { word -> normalizedText.contains(word) }
 
                 if (detected) {
-                    Log.e(TAG, "Hotword detected! Text: $text")
+                    Log.d(TAG, "Hotword detected in final result! Text: $text")
                     onHotwordDetected()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to parse Vosk result: $it", e)
             }
-            Unit
         }
     }
 
