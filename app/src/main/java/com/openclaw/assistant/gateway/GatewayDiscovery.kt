@@ -15,6 +15,9 @@ import java.nio.charset.CodingErrorAction
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,8 +43,6 @@ import org.xbill.DNS.SimpleResolver
 import org.xbill.DNS.TextParseException
 import org.xbill.DNS.TXTRecord
 import org.xbill.DNS.Type
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 @Suppress("DEPRECATION")
 class GatewayDiscovery(
@@ -69,12 +70,25 @@ class GatewayDiscovery(
   @Volatile private var lastWideAreaRcode: Int? = null
   @Volatile private var lastWideAreaCount: Int = 0
 
+  private val dnsFailureTracker = DnsFailureTracker()
+
   private val discoveryListener =
     object : NsdManager.DiscoveryListener {
-      override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
-      override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
-      override fun onDiscoveryStarted(serviceType: String) {}
-      override fun onDiscoveryStopped(serviceType: String) {}
+      override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+        Log.w(logTag, "Local discovery start failed: errorCode=$errorCode")
+      }
+
+      override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+        Log.w(logTag, "Local discovery stop failed: errorCode=$errorCode")
+      }
+
+      override fun onDiscoveryStarted(serviceType: String) {
+        Log.i(logTag, "Local discovery started for $serviceType")
+      }
+
+      override fun onDiscoveryStopped(serviceType: String) {
+        Log.i(logTag, "Local discovery stopped for $serviceType")
+      }
 
       override fun onServiceFound(serviceInfo: NsdServiceInfo) {
         if (serviceInfo.serviceType != this@GatewayDiscovery.serviceType) return
@@ -99,16 +113,16 @@ class GatewayDiscovery(
   private fun startLocalDiscovery() {
     try {
       nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
-    } catch (_: Throwable) {
-      // ignore (best-effort)
+    } catch (e: Throwable) {
+      Log.w(logTag, "Failed to start local discovery", e)
     }
   }
 
   private fun stopLocalDiscovery() {
     try {
       nsd.stopServiceDiscovery(discoveryListener)
-    } catch (_: Throwable) {
-      // ignore (best-effort)
+    } catch (e: Throwable) {
+      Log.w(logTag, "Failed to stop local discovery", e)
     }
   }
 
@@ -116,12 +130,20 @@ class GatewayDiscovery(
     unicastJob =
       scope.launch(Dispatchers.IO) {
         while (true) {
+          val delayMs = dnsFailureTracker.getBackoffDelayMs()
+          if (delayMs > BASE_RETRY_DELAY_MS) {
+            Log.d(logTag, "DNS backoff active: waiting ${delayMs}ms before next query")
+          }
+          delay(delayMs)
+
+          val startTime = System.currentTimeMillis()
           try {
             refreshUnicast(domain)
-          } catch (_: Throwable) {
-            // ignore (best-effort)
+            dnsFailureTracker.recordSuccess()
+          } catch (e: Throwable) {
+            dnsFailureTracker.recordFailure()
+            Log.e(logTag, "Wide-area discovery failed (consecutiveFailures=${dnsFailureTracker.consecutiveFailures})", e)
           }
-          delay(5000)
         }
       }
   }
@@ -130,45 +152,46 @@ class GatewayDiscovery(
     nsd.resolveService(
       serviceInfo,
       object : NsdManager.ResolveListener {
-        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+          Log.w(logTag, "Service resolve failed: ${serviceInfo.serviceName}, errorCode=$errorCode")
+        }
 
-      override fun onServiceResolved(resolved: NsdServiceInfo) {
-        val host = resolved.host?.hostAddress ?: return
-        val port = resolved.port
-        if (port <= 0) return
+        override fun onServiceResolved(resolved: NsdServiceInfo) {
+          val host = resolved.host?.hostAddress ?: return
+          val port = resolved.port
+          if (port <= 0) return
 
-        val rawServiceName = resolved.serviceName
-        val serviceName = BonjourEscapes.decode(rawServiceName)
-        val displayName = BonjourEscapes.decode(txt(resolved, "displayName") ?: serviceName)
-        val lanHost = txt(resolved, "lanHost")
-        val tailnetDns = txt(resolved, "tailnetDns")
-        val gatewayPort = txtInt(resolved, "gatewayPort")
-        val canvasPort = txtInt(resolved, "canvasPort")
-        val tlsEnabled = txtBool(resolved, "gatewayTls")
-        val tlsFingerprint = txt(resolved, "gatewayTlsSha256")
-        val id = stableId(serviceName, "local.")
-        localById[id] =
-          GatewayEndpoint(
-            stableId = id,
-            name = displayName,
-            host = host,
-            port = port,
-            lanHost = lanHost,
-            tailnetDns = tailnetDns,
-            gatewayPort = gatewayPort,
-            canvasPort = canvasPort,
-            tlsEnabled = tlsEnabled,
-            tlsFingerprintSha256 = tlsFingerprint,
-          )
-        publish()
-      }
-    },
-  )
+          val rawServiceName = resolved.serviceName
+          val serviceName = BonjourEscapes.decode(rawServiceName)
+          val displayName = BonjourEscapes.decode(txt(resolved, "displayName") ?: serviceName)
+          val lanHost = txt(resolved, "lanHost")
+          val tailnetDns = txt(resolved, "tailnetDns")
+          val gatewayPort = txtInt(resolved, "gatewayPort")
+          val canvasPort = txtInt(resolved, "canvasPort")
+          val tlsEnabled = txtBool(resolved, "gatewayTls")
+          val tlsFingerprint = txt(resolved, "gatewayTlsSha256")
+          val id = stableId(serviceName, "local.")
+          localById[id] =
+            GatewayEndpoint(
+              stableId = id,
+              name = displayName,
+              host = host,
+              port = port,
+              lanHost = lanHost,
+              tailnetDns = tailnetDns,
+              gatewayPort = gatewayPort,
+              canvasPort = canvasPort,
+              tlsEnabled = tlsEnabled,
+              tlsFingerprintSha256 = tlsFingerprint,
+            )
+          publish()
+        }
+      },
+    )
   }
 
   private fun publish() {
-    _gateways.value =
-      (localById.values + unicastById.values).sortedBy { it.name.lowercase() }
+    _gateways.value = (localById.values + unicastById.values).sortedBy { it.name.lowercase() }
     _statusText.value = buildStatusText()
   }
 
@@ -220,8 +243,22 @@ class GatewayDiscovery(
 
   private suspend fun refreshUnicast(domain: String) {
     val ptrName = "${serviceType}${domain}"
-    val ptrMsg = lookupUnicastMessage(ptrName, Type.PTR) ?: return
+    val ptrMsg = lookupUnicastMessage(ptrName, Type.PTR)
+
+    if (ptrMsg == null) {
+      Log.w(logTag, "DNS PTR lookup failed for $ptrName")
+      clearUnicastEndpoints()
+      return
+    }
+
     val ptrRecords = records(ptrMsg, Section.ANSWER).mapNotNull { it as? PTRRecord }
+
+    if (ptrRecords.isEmpty() && ptrMsg.header.rcode != Rcode.NOERROR) {
+      Log.w(logTag, "DNS PTR lookup returned rcode=${Rcode.string(ptrMsg.header.rcode)} for $ptrName")
+      lastWideAreaRcode = ptrMsg.header.rcode
+      clearUnicastEndpoints()
+      return
+    }
 
     val next = LinkedHashMap<String, GatewayEndpoint>()
     for (ptr in ptrRecords) {
@@ -229,7 +266,10 @@ class GatewayDiscovery(
       val srv =
         recordByName(ptrMsg, instanceFqdn, Type.SRV) as? SRVRecord
           ?: run {
-            val msg = lookupUnicastMessage(instanceFqdn, Type.SRV) ?: return@run null
+            val msg = lookupUnicastMessage(instanceFqdn, Type.SRV)
+            if (msg == null) {
+              Log.w(logTag, "DNS SRV lookup failed for $instanceFqdn")
+            }
             recordByName(msg, instanceFqdn, Type.SRV) as? SRVRecord
           }
           ?: continue
@@ -241,7 +281,10 @@ class GatewayDiscovery(
         resolveHostFromMessage(ptrMsg, targetFqdn)
           ?: resolveHostFromMessage(lookupUnicastMessage(instanceFqdn, Type.SRV), targetFqdn)
           ?: resolveHostUnicast(targetFqdn)
-          ?: continue
+          ?: run {
+            Log.w(logTag, "Could not resolve host for $targetFqdn")
+            continue
+          }
 
       val txtFromPtr =
         recordsByName(ptrMsg, Section.ADDITIONAL)[keyName(instanceFqdn)]
@@ -252,6 +295,9 @@ class GatewayDiscovery(
           txtFromPtr
         } else {
           val msg = lookupUnicastMessage(instanceFqdn, Type.TXT)
+          if (msg == null) {
+            Log.w(logTag, "DNS TXT lookup failed for $instanceFqdn")
+          }
           records(msg, Section.ANSWER).mapNotNull { it as? TXTRecord }
         }
       val instanceName = BonjourEscapes.decode(decodeInstanceName(instanceFqdn, domain))
@@ -280,7 +326,12 @@ class GatewayDiscovery(
 
     unicastById.clear()
     unicastById.putAll(next)
-    lastWideAreaRcode = ptrMsg.header.rcode
+
+    if (next.isNotEmpty()) {
+      lastWideAreaRcode = Rcode.NOERROR
+    } else {
+      lastWideAreaRcode = ptrMsg.header.rcode
+    }
     lastWideAreaCount = next.size
     publish()
 
@@ -289,7 +340,15 @@ class GatewayDiscovery(
         logTag,
         "wide-area discovery: 0 results for $ptrName (rcode=${Rcode.string(ptrMsg.header.rcode)})",
       )
+    } else {
+      Log.d(logTag, "wide-area discovery: found ${next.size} gateway(s) for $domain")
     }
+  }
+
+  private fun clearUnicastEndpoints() {
+    unicastById.clear()
+    lastWideAreaCount = 0
+    publish()
   }
 
   private fun decodeInstanceName(instanceFqdn: String, domain: String): String {
@@ -308,6 +367,7 @@ class GatewayDiscovery(
   }
 
   private suspend fun lookupUnicastMessage(name: String, type: Int): Message? {
+    val queryStartTime = System.currentTimeMillis()
     val query =
       try {
         Message.newQuery(
@@ -317,18 +377,39 @@ class GatewayDiscovery(
             DClass.IN,
           ),
         )
-      } catch (_: TextParseException) {
+      } catch (e: TextParseException) {
+        Log.w(logTag, "Failed to build DNS query for $name type=$type", e)
         return null
       }
 
+    val systemStartTime = System.currentTimeMillis()
     val system = queryViaSystemDns(query)
-    if (records(system, Section.ANSWER).any { it.type == type }) return system
+    val systemDuration = System.currentTimeMillis() - systemStartTime
 
-    val direct = createDirectResolver() ?: return system
+    if (records(system, Section.ANSWER).any { it.type == type }) {
+      Log.v(logTag, "DNS query via system DNS succeeded: $name type=$type in ${systemDuration}ms")
+      return system
+    }
+
+    val direct = createDirectResolver()
+    if (direct == null) {
+      Log.v(logTag, "DNS query using system DNS (no direct resolver): $name type=$type in ${systemDuration}ms")
+      return system
+    }
+
     return try {
+      val directStartTime = System.currentTimeMillis()
       val msg = direct.send(query)
-      if (records(msg, Section.ANSWER).any { it.type == type }) msg else system
-    } catch (_: Throwable) {
+      val directDuration = System.currentTimeMillis() - directStartTime
+      if (records(msg, Section.ANSWER).any { it.type == type }) {
+        Log.v(logTag, "DNS query via direct resolver succeeded: $name type=$type in ${directDuration}ms")
+        msg
+      } else {
+        Log.v(logTag, "DNS query using system DNS (direct had no answers): $name type=$type in ${systemDuration}ms")
+        system
+      }
+    } catch (e: Throwable) {
+      Log.w(logTag, "Direct DNS query failed for $name type=$type after ${System.currentTimeMillis() - systemStartTime}ms", e)
       system
     }
   }
@@ -338,13 +419,15 @@ class GatewayDiscovery(
     val bytes =
       try {
         rawQuery(network, query.toWire())
-      } catch (_: Throwable) {
+      } catch (e: Throwable) {
+        Log.w(logTag, "System DNS query failed", e)
         return null
       }
 
     return try {
       Message(bytes)
-    } catch (_: IOException) {
+    } catch (e: IOException) {
+      Log.w(logTag, "Failed to parse DNS response", e)
       null
     }
   }
@@ -388,7 +471,6 @@ class GatewayDiscovery(
   private fun preferredDnsNetwork(): android.net.Network? {
     val cm = connectivity ?: return null
 
-    // Prefer VPN (Tailscale) when present; otherwise use the active network.
     cm.allNetworks.firstOrNull { n ->
       val caps = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
       caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
@@ -434,7 +516,8 @@ class GatewayDiscovery(
         }
       if (resolvers.isEmpty()) return null
       ExtendedResolver(resolvers.toTypedArray()).apply { setTimeout(3) }
-    } catch (_: Throwable) {
+    } catch (e: Throwable) {
+      Log.w(logTag, "Failed to create direct DNS resolver", e)
       null
     }
   }
@@ -491,8 +574,6 @@ class GatewayDiscovery(
   }
 
   private fun decodeDnsTxtString(raw: String): String {
-    // dnsjava treats TXT as opaque bytes and decodes as ISO-8859-1 to preserve bytes.
-    // Our TXT payload is UTF-8 (written by the gateway), so re-decode when possible.
     val bytes = raw.toByteArray(Charsets.ISO_8859_1)
     val decoder =
       Charsets.UTF_8
@@ -517,5 +598,30 @@ class GatewayDiscovery(
         .mapNotNull { it.address?.hostAddress }
 
     return a.firstOrNull() ?: aaaa.firstOrNull()
+  }
+
+  companion object {
+    private const val BASE_RETRY_DELAY_MS = 5000L
+    private const val MAX_RETRY_DELAY_MS = 60000L
+    private const val CIRCUIT_BREAKER_THRESHOLD = 5
+
+    private class DnsFailureTracker {
+      @Volatile var consecutiveFailures: Int = 0
+
+      fun recordFailure() {
+        consecutiveFailures++
+      }
+
+      fun recordSuccess() {
+        consecutiveFailures = 0
+      }
+
+      fun getBackoffDelayMs(): Long {
+        if (consecutiveFailures == 0) return BASE_RETRY_DELAY_MS
+        if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) return MAX_RETRY_DELAY_MS
+        val backoffMultiplier = 1 shl (consecutiveFailures - 1)
+        return min(BASE_RETRY_DELAY_MS * backoffMultiplier, MAX_RETRY_DELAY_MS)
+      }
+    }
   }
 }
