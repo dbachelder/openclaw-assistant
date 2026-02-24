@@ -52,6 +52,30 @@ interface ChatDao {
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     fun getMessagesForSession(sessionId: String): Flow<List<MessageEntity>>
 
+    /**
+     * Get paginated messages for a session. Use this for large message histories
+     * to avoid loading all messages into memory at once.
+     *
+     * @param sessionId The session ID to query
+     * @param limit Maximum number of messages to return
+     * @param offset Number of messages to skip (for pagination)
+     */
+    @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp ASC LIMIT :limit OFFSET :offset")
+    suspend fun getMessagesForSessionPaginated(sessionId: String, limit: Int, offset: Int): List<MessageEntity>
+
+    /**
+     * Get the most recent messages for a session, useful for showing the latest
+     * messages without loading the entire history.
+     *
+     * @param sessionId The session ID to query
+     * @param limit Maximum number of messages to return (most recent)
+     */
+    @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentMessagesForSession(sessionId: String, limit: Int): List<MessageEntity>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE sessionId = :sessionId")
+    suspend fun getMessageCountForSession(sessionId: String): Int
+
     @Query("DELETE FROM messages WHERE sessionId = :sessionId")
     suspend fun deleteMessagesForSession(sessionId: String)
 }
