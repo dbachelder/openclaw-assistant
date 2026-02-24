@@ -23,6 +23,9 @@ import com.openclaw.assistant.R
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.openclaw.assistant.data.SettingsRepository
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicInteger
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener as VoskRecognitionListener
@@ -74,11 +77,12 @@ class HotwordService : Service(), VoskRecognitionListener {
 
     @Volatile private var isListeningForCommand = false
     @Volatile private var isSessionActive = false
-    private var audioRetryCount = 0
+    private val audioRetryCount = AtomicInteger(0)
     private val MAX_AUDIO_RETRIES = 5
     private var watchdogJob: Job? = null
     private var errorRecoveryJob: Job? = null
     private var retryJob: Job? = null
+    private val retryMutex = Mutex()
     private val SESSION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
 
     private val controlReceiver = object : android.content.BroadcastReceiver() {
@@ -634,7 +638,7 @@ class HotwordService : Service(), VoskRecognitionListener {
                 scheduleAudioRetry()
                 return@launch
             }
-            audioRetryCount = 0
+            audioRetryCount.set(0)
 
             try {
                 // Get wake words from settings
@@ -655,20 +659,24 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     private fun scheduleAudioRetry() {
-        if (audioRetryCount >= MAX_AUDIO_RETRIES) {
-            Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
-            audioRetryCount = 0
-            showMicUnavailableNotification()
-            return
-        }
-        audioRetryCount++
-        val delayMs = (2000L * audioRetryCount).coerceAtMost(10000L)
-        Log.w(TAG, "Scheduling audio retry #$audioRetryCount in ${delayMs}ms")
-        retryJob?.cancel()
-        retryJob = scope.launch {
-            delay(delayMs)
-            if (!isSessionActive) {
-                startHotwordListening()
+        scope.launch {
+            retryMutex.withLock {
+                val currentCount = audioRetryCount.incrementAndGet()
+                if (currentCount > MAX_AUDIO_RETRIES) {
+                    Log.e(TAG, "Max audio retries ($MAX_AUDIO_RETRIES) exceeded. Giving up.")
+                    audioRetryCount.set(0)
+                    showMicUnavailableNotification()
+                    return@withLock
+                }
+                val delayMs = (2000L * currentCount).coerceAtMost(10000L)
+                Log.w(TAG, "Scheduling audio retry #$currentCount in ${delayMs}ms")
+                retryJob?.cancel()
+                retryJob = scope.launch {
+                    delay(delayMs)
+                    if (!isSessionActive) {
+                        startHotwordListening()
+                    }
+                }
             }
         }
     }
@@ -751,7 +759,7 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun resumeHotwordDetection() {
         if (isSessionActive) return
         isListeningForCommand = false
-        audioRetryCount = 0
+        audioRetryCount.set(0)
         updateNotification()
         scope.launch {
             delay(500)
