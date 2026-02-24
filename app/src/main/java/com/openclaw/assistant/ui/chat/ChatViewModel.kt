@@ -720,7 +720,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun speakSingleChunk(text: String, isFirst: Boolean): Boolean {
         // Scale timeout based on text length (minimum 30s, ~150ms per character to accommodate Japanese)
-        val timeoutMs = (30_000L + (text.length * 150L)).coerceAtMost(600_000L) // Max 10 mins
+        // Cap length before multiplication to prevent overflow with malicious input
+        val safeLength = text.length.coerceAtMost(1_000_000)
+        val timeoutMs = (30_000L + (safeLength * 150L)).coerceAtMost(600_000L) // Max 10 mins
         val callbackResult = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 val utteranceId = UUID.randomUUID().toString()
