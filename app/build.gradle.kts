@@ -184,7 +184,8 @@ dependencies {
     implementation("com.alphacephei:vosk-android:0.3.75")
 
     // Tink (Crypto)
-    implementation("com.google.crypto.tink:tink-android:1.10.0")
+    implementation("com.google.crypto.tink:tink-android:1.13.0")
+    implementation("com.google.crypto.tink:tink-cleartext:1.13.0")
 
     // Bouncy Castle (Ed25519 provider)
     implementation("org.bouncycastle:bcprov-jdk18on:1.83")
