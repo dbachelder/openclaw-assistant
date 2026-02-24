@@ -4,16 +4,13 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.google.crypto.tink.CleartextKeysetHandle
-import com.google.crypto.tink.JsonKeysetWriter
 import com.google.crypto.tink.KeyTemplates
 import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.PublicKeySign
+import com.google.crypto.tink.TinkJsonProtoKeysetFormat
 import com.google.crypto.tink.config.TinkConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
-import com.google.crypto.tink.signature.SignatureConfig
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 
 class DeviceIdentity(context: Context) {
@@ -33,7 +30,7 @@ class DeviceIdentity(context: Context) {
 
     init {
         try {
-            SignatureConfig.register()
+            TinkConfig.register()
 
             val manager = AndroidKeysetManager.Builder()
                 .withSharedPref(context, KEYSET_NAME, PREF_FILE_NAME)
@@ -54,15 +51,9 @@ class DeviceIdentity(context: Context) {
     private fun extractPublicKey(handle: KeysetHandle) {
         try {
             val publicHandle = handle.getPublicKeysetHandle()
-            val outputStream = ByteArrayOutputStream()
-            // Using CleartextKeysetHandle to export public key is safe and necessary here
-            // because we need the raw key bytes for the protocol, not just a Tink primitive.
-            CleartextKeysetHandle.write(
-                publicHandle, 
-                JsonKeysetWriter.withOutputStream(outputStream)
-            )
-            
-            val jsonStr = outputStream.toString("UTF-8")
+            // serializeKeysetWithoutSecret is the correct API for public key handles
+            // as they contain no secret key material
+            val jsonStr = TinkJsonProtoKeysetFormat.serializeKeysetWithoutSecret(publicHandle)
             val json = JSONObject(jsonStr)
             val keys = json.getJSONArray("key")
             
