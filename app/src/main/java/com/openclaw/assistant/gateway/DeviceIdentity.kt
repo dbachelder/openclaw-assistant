@@ -51,13 +51,9 @@ class DeviceIdentity(context: Context) {
     private fun extractPublicKey(handle: KeysetHandle) {
         try {
             val publicHandle = handle.getPublicKeysetHandle()
-            // SECURITY NOTE: Exporting keys in cleartext is generally discouraged.
-            // This is necessary here because the protocol requires raw key bytes for device
-            // identification, not just Tink primitives. Only public keys are exported.
-            val jsonStr = TinkJsonProtoKeysetFormat.serializeKeyset(
-                publicHandle,
-                com.google.crypto.tink.InsecureSecretKeyAccess.get()
-            )
+            // serializeKeysetWithoutSecret is the correct API for public key handles
+            // as they contain no secret key material
+            val jsonStr = TinkJsonProtoKeysetFormat.serializeKeysetWithoutSecret(publicHandle)
             val json = JSONObject(jsonStr)
             val keys = json.getJSONArray("key")
             
