@@ -301,26 +301,53 @@ class NodeRuntime(context: Context) {
   private fun updateStatus() {
     _isConnected.value = operatorConnected
     _isOperatorOffline.value = !operatorConnected && nodeConnected
+    _isPairingRequired.value = detectPairingRequired()
+    updateStatusText()
+  }
 
-    val pairingKeyword = "pairing required"
-    val paringKeyword = "paring required" // Handle common typo in gateway or its libraries
-    val operatorNeedsPairing = !operatorConnected && (
-      operatorStatusText.contains(pairingKeyword, ignoreCase = true) ||
-      operatorStatusText.contains(paringKeyword, ignoreCase = true)
-    )
-    val nodeNeedsPairing = !nodeConnected && (
-      nodeStatusText.contains(pairingKeyword, ignoreCase = true) ||
-      nodeStatusText.contains(paringKeyword, ignoreCase = true)
+  /**
+   * Detects if pairing is required based on session status.
+   * Checks both exact error codes and message content for backward compatibility.
+   */
+  private fun detectPairingRequired(): Boolean {
+    // Already connected - no pairing needed
+    if (operatorConnected) return false
+
+    val authErrorCodes = setOf(
+      "UNAUTHORIZED",
+      "FORBIDDEN",
+      "AUTHENTICATION_FAILED",
+      "INVALID_TOKEN",
+      "DEVICE_NOT_APPROVED",
+      "PAIRING_REQUIRED"
     )
 
-    if (operatorNeedsPairing || nodeNeedsPairing) {
-      // Show pairing card as long as either session still needs approval,
-      // even if the other session has already connected.
-      _isPairingRequired.value = true
-    } else if (!operatorNeedsPairing && !nodeNeedsPairing) {
-      _isPairingRequired.value = false
+    val pairingPhrases = setOf(
+      "pairing required",
+      "paring required", // Handle common typo
+      "not approved",
+      "invalid token",
+      "authentication failed"
+    )
+
+    fun statusNeedsPairing(statusText: String): Boolean {
+      val lower = statusText.lowercase()
+      // Check for auth error codes (format: "CODE: message")
+      if (authErrorCodes.any { statusText.startsWith(it) }) return true
+      // Check for pairing phrases in message
+      if (pairingPhrases.any { lower.contains(it) }) return true
+      return false
     }
 
+    val operatorNeedsPairing = !operatorConnected && statusNeedsPairing(operatorStatusText)
+    val nodeNeedsPairing = !nodeConnected && statusNeedsPairing(nodeStatusText)
+
+    // Show pairing card as long as either session still needs approval,
+    // even if the other session has already connected.
+    return operatorNeedsPairing || nodeNeedsPairing
+  }
+
+  private fun updateStatusText() {
     _statusText.value =
       when {
         operatorConnected && nodeConnected -> "Connected"
