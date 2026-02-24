@@ -29,6 +29,7 @@ import org.vosk.android.RecognitionListener as VoskRecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 import java.io.IOException
+import java.security.MessageDigest
 import org.json.JSONObject
 
 /**
@@ -41,6 +42,8 @@ class HotwordService : Service(), VoskRecognitionListener {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "hotword_channel"
         private const val SAMPLE_RATE = 16000.0f
+        private const val MAX_MODEL_LOAD_RETRIES = 2
+        private const val MODEL_RETRY_DELAY_MS = 1000L
         const val ACTION_RESUME_HOTWORD = "com.openclaw.assistant.ACTION_RESUME_HOTWORD"
         const val ACTION_PAUSE_HOTWORD = "com.openclaw.assistant.ACTION_PAUSE_HOTWORD"
         
@@ -307,15 +310,13 @@ class HotwordService : Service(), VoskRecognitionListener {
         nm.notify(NOTIFICATION_ID, createNotification())
     }
 
-    private fun initVosk() {
+    private fun initVosk(retryCount: Int = 0) {
         if (model != null) {
             if (!isSessionActive) startHotwordListening()
             return
         }
         val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
 
-        // Clear vosk_unsupported flag when the app is updated, so the new Vosk
-        // native libraries get a chance to load on devices that previously failed.
         val currentVersion = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
@@ -337,11 +338,44 @@ class HotwordService : Service(), VoskRecognitionListener {
 
         scope.launch(Dispatchers.IO) {
             try {
-                val modelPath = copyAssets()
-                if (modelPath != null) {
+                var modelPath = copyAssets()
+                if (modelPath == null) {
+                    Log.e(TAG, "Model copy failed, cannot initialize Vosk")
+                    FirebaseCrashlytics.getInstance().log("Vosk model copy failed")
+                    return@launch
+                }
+
+                try {
+                    Log.d(TAG, "Loading Vosk model from: $modelPath")
                     model = Model(modelPath)
+                    Log.d(TAG, "Vosk model loaded successfully")
                     withContext(Dispatchers.Main) {
                         if (!isSessionActive) startHotwordListening()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load Vosk model: ${e.message}", e)
+                    FirebaseCrashlytics.getInstance().recordException(e)
+
+                    if (retryCount < MAX_MODEL_LOAD_RETRIES) {
+                        Log.w(TAG, "Model load failed, will retry with fresh copy (attempt ${retryCount + 1}/$MAX_MODEL_LOAD_RETRIES)")
+
+                        // Delete the model directory to force a fresh copy
+                        val targetDir = java.io.File(filesDir, "model")
+                        if (targetDir.exists()) {
+                            val deleted = targetDir.deleteRecursively()
+                            Log.d(TAG, "Model directory deleted for retry: $deleted")
+                        }
+
+                        // Clear version prefs to force re-copy
+                        prefs.edit().remove("model_version").apply()
+
+                        withContext(Dispatchers.Main) {
+                            delay(MODEL_RETRY_DELAY_MS)
+                            initVosk(retryCount + 1)
+                        }
+                    } else {
+                        Log.e(TAG, "Max model load retries ($MAX_MODEL_LOAD_RETRIES) exceeded. Giving up.")
+                        FirebaseCrashlytics.getInstance().log("Vosk model load failed after $MAX_MODEL_LOAD_RETRIES retries")
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -354,7 +388,7 @@ class HotwordService : Service(), VoskRecognitionListener {
                     .putInt("vosk_unsupported_version", currentVersion)
                     .apply()
             } catch (e: Exception) {
-                Log.e(TAG, "Init error", e)
+                Log.e(TAG, "Vosk init error: ${e.message}", e)
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
@@ -363,7 +397,6 @@ class HotwordService : Service(), VoskRecognitionListener {
     private fun copyAssets(): String? {
         val targetDir = java.io.File(filesDir, "model")
 
-        // Check version to avoid redundant copy
         val currentVersion = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
@@ -385,18 +418,95 @@ class HotwordService : Service(), VoskRecognitionListener {
 
         try {
             if (targetDir.exists()) {
+                Log.d(TAG, "Deleting existing model directory for fresh copy")
                 targetDir.deleteRecursively()
             }
 
             val success = copyAssetFolder(assets, "model", targetDir.absolutePath)
-            if (success) {
-                prefs.edit().putInt("model_version", currentVersion).apply()
-                return targetDir.absolutePath
+            if (!success) {
+                Log.e(TAG, "Model copy failed - some files may not have copied successfully")
+                return null
             }
-            return null
+
+            // Verify checksums of copied files
+            val checksumsValid = verifyModelChecksums(targetDir)
+            if (!checksumsValid) {
+                Log.e(TAG, "Model checksum verification failed - files may be corrupted")
+                targetDir.deleteRecursively()
+                return null
+            }
+
+            prefs.edit().putInt("model_version", currentVersion).apply()
+            Log.d(TAG, "Model copied and verified successfully")
+            return targetDir.absolutePath
         } catch (e: Exception) {
+            Log.e(TAG, "Error during model copy: ${e.message}", e)
             return null
         }
+    }
+
+    private fun verifyModelChecksums(modelDir: java.io.File): Boolean {
+        if (!modelDir.exists() || !modelDir.isDirectory) {
+            Log.e(TAG, "Model directory does not exist or is not a directory")
+            return false
+        }
+
+        val files = modelDir.listFilesRecursive()
+        if (files.isEmpty()) {
+            Log.e(TAG, "No files found in model directory")
+            return false
+        }
+
+        var allValid = true
+        for (file in files) {
+            if (!file.isFile) continue
+
+            val checksum = computeFileChecksum(file)
+            if (checksum == null) {
+                Log.e(TAG, "Failed to compute checksum for ${file.name}")
+                allValid = false
+                continue
+            }
+
+            // Store checksum in prefs for future verification
+            val prefs = getSharedPreferences("hotword_prefs", Context.MODE_PRIVATE)
+            val key = "model_checksum_${file.name}"
+            prefs.edit().putString(key, checksum).apply()
+
+            Log.d(TAG, "Verified ${file.name}: $checksum")
+        }
+
+        return allValid
+    }
+
+    private fun computeFileChecksum(file: java.io.File): String? {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error computing checksum for ${file.name}: ${e.message}")
+            null
+        }
+    }
+
+    private fun java.io.File.listFilesRecursive(): List<java.io.File> {
+        val result = mutableListOf<java.io.File>()
+        val files = listFiles() ?: return result
+        for (file in files) {
+            if (file.isDirectory) {
+                result.addAll(file.listFilesRecursive())
+            } else {
+                result.add(file)
+            }
+        }
+        return result
     }
 
     private fun copyAssetFolder(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
@@ -418,19 +528,28 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     private fun copyAsset(assetManager: android.content.res.AssetManager, fromAssetPath: String, toPath: String): Boolean {
-        var inStream: java.io.`InputStream`? = null
+        var inStream: java.io.InputStream? = null
         var outStream: java.io.OutputStream? = null
         try {
             inStream = assetManager.open(fromAssetPath)
-            java.io.File(toPath).createNewFile()
-            outStream = java.io.FileOutputStream(toPath)
-            inStream.copyTo(outStream)
+            val outFile = java.io.File(toPath)
+            outFile.createNewFile()
+            outStream = java.io.FileOutputStream(outFile)
+            val bytesCopied = inStream.copyTo(outStream)
+            Log.d(TAG, "Copied $fromAssetPath to $toPath ($bytesCopied bytes)")
             return true
+        } catch (e: java.io.FileNotFoundException) {
+            Log.e(TAG, "Asset not found: $fromAssetPath")
+            return false
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "IO error copying $fromAssetPath: ${e.message}")
+            return false
         } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error copying $fromAssetPath: ${e.message}")
             return false
         } finally {
-            inStream?.close()
-            outStream?.close()
+            try { inStream?.close() } catch (_: Exception) {}
+            try { outStream?.close() } catch (_: Exception) {}
         }
     }
 
