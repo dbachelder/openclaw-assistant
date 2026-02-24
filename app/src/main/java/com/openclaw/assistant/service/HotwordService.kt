@@ -154,13 +154,13 @@ class HotwordService : Service(), VoskRecognitionListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Android 14+ requires RECORD_AUDIO runtime permission for foregroundServiceType="microphone"
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "RECORD_AUDIO permission not granted. Cannot start foreground service with microphone type.")
+        // Check permissions before starting foreground service
+        if (!hasRequiredPermissions()) {
+            Log.w(TAG, "Required permissions not granted. Showing permission notification.")
             showPermissionNotification()
-            stopSelf()
-            return START_NOT_STICKY
+            // Return START_STICKY so the service will restart if the user grants permissions later
+            // We don't call stopSelf() here to allow the system to restart us
+            return START_STICKY
         }
 
         try {
@@ -176,12 +176,34 @@ class HotwordService : Service(), VoskRecognitionListener {
         } catch (e: SecurityException) {
             Log.e(TAG, "Failed to start foreground service", e)
             FirebaseCrashlytics.getInstance().recordException(e)
-            stopSelf()
-            return START_NOT_STICKY
+            showPermissionNotification()
+            return START_STICKY
         }
 
         initVosk()
         return START_STICKY
+    }
+
+    /**
+     * Check if all required permissions are granted for the hotword service.
+     * On Android 14+ (UPSIDE_DOWN_CAKE), this includes FOREGROUND_SERVICE_MICROPHONE.
+     */
+    private fun hasRequiredPermissions(): Boolean {
+        // Always require RECORD_AUDIO permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+
+        // On Android 14+, also check FOREGROUND_SERVICE_MICROPHONE permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+                return false
+            }
+        }
+
+        return true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

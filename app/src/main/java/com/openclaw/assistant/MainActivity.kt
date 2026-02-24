@@ -267,24 +267,50 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 return
             }
 
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED) {
+            // Check all required permissions before starting the service
+            val missingPermissions = getMissingHotwordPermissions()
+            if (missingPermissions.isEmpty()) {
                 settings.hotwordEnabled = true
                 HotwordService.start(this)
                 Toast.makeText(this, getString(R.string.hotword_started), Toast.LENGTH_SHORT).show()
-            } else if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
+            } else if (missingPermissions.contains(Manifest.permission.RECORD_AUDIO) &&
+                       ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
                 // Show rationale dialog before requesting permission
                 showPermissionRationaleDialog()
             } else {
-                // First-time request: launch directly
+                // Request missing permissions
                 pendingHotwordStart = true
-                permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                permissionLauncher.launch(missingPermissions.toTypedArray())
             }
         } else {
             settings.hotwordEnabled = false
             HotwordService.stop(this)
             Toast.makeText(this, getString(R.string.hotword_stopped), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Returns a list of missing permissions required for the hotword service.
+     * On Android 14+, this includes FOREGROUND_SERVICE_MICROPHONE.
+     */
+    private fun getMissingHotwordPermissions(): List<String> {
+        val missing = mutableListOf<String>()
+
+        // Always require RECORD_AUDIO permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.RECORD_AUDIO)
+        }
+
+        // On Android 14+, also require FOREGROUND_SERVICE_MICROPHONE permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
+            }
+        }
+
+        return missing
     }
 
     private fun showPermissionRationaleDialog() {
