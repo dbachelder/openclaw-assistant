@@ -583,6 +583,11 @@ class HotwordService : Service(), VoskRecognitionListener {
                 }
 
                 val testRecord = try {
+                    if (android.content.pm.PackageManager.PERMISSION_GRANTED !=
+                        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)) {
+                        Log.e(TAG, "RECORD_AUDIO permission not granted")
+                        return@withTimeout null
+                    }
                     AudioRecord(
                         MediaRecorder.AudioSource.VOICE_RECOGNITION,
                         16000,
