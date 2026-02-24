@@ -18,8 +18,18 @@ class DeviceIdentityStore(context: Context) {
     return DeviceIdentity(appContext).also { cached = it }
   }
 
-  fun signPayload(payload: String, identity: DeviceIdentity): String? {
-    return identity.sign(payload)
+  /**
+   * Signs the given payload using the provided device identity.
+   *
+   * @param payload The data to sign
+   * @param identity The device identity to use for signing
+   * @return The base64url-encoded signature
+   * @throws IllegalStateException if signing fails due to uninitialized signer
+   */
+  fun signPayload(payload: String, identity: DeviceIdentity): String {
+    val signature = identity.sign(payload)
+      ?: throw IllegalStateException("Failed to sign payload: device identity signer is not initialized")
+    return signature
   }
 
   fun publicKeyBase64Url(identity: DeviceIdentity): String? {
