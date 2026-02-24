@@ -326,7 +326,11 @@ class GatewaySession(
       val identityId = identity.deviceId ?: throw IllegalStateException("missing device identity id")
       val storedToken = deviceAuthStore.loadToken(identityId, options.role)
       val trimmedToken = token?.trim().orEmpty()
-      val authToken = if (storedToken.isNullOrBlank()) trimmedToken else storedToken
+      val authToken = if (options.role == "operator") {
+          trimmedToken
+      } else {
+          if (storedToken.isNullOrBlank()) trimmedToken else storedToken
+      }
       val canFallbackToShared = !storedToken.isNullOrBlank() && trimmedToken.isNotBlank()
       val payload = buildConnectParams(identity, connectNonce, authToken, password?.trim())
       val res = request("connect", payload, timeoutMs = 8_000)
@@ -415,7 +419,7 @@ class GatewaySession(
       }
       val publicKey = identityStore.publicKeyBase64Url(identity)
       val deviceJson =
-        if (!signature.isNullOrBlank() && !publicKey.isNullOrBlank()) {
+        if (options.role == "node" && !signature.isNullOrBlank() && !publicKey.isNullOrBlank()) {
           buildJsonObject {
             put("id", JsonPrimitive(identityId))
             put("publicKey", JsonPrimitive(publicKey))
