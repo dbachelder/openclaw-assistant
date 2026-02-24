@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -60,6 +62,7 @@ class ChatController(
   private val pendingRunTimeoutMs = 120_000L
 
   private var bootstrapJob: Job? = null
+  private val bootstrapMutex = Mutex()
 
   private var lastHealthPollAtMs: Long? = null
 
@@ -76,27 +79,51 @@ class ChatController(
 
   fun load(sessionKey: String) {
     val key = sessionKey.trim().ifEmpty { "main" }
-    // If the key hasn't changed and bootstrap is still running, do nothing.
-    // This prevents a second call from clearing in-flight pendingRuns.
-    if (_sessionKey.value == key && bootstrapJob?.isActive == true) return
-    _sessionKey.value = key
-    bootstrapJob?.cancel()
-    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
+    scope.launch {
+      bootstrapMutex.withLock {
+        // If the key hasn't changed and bootstrap is still running, do nothing.
+        // This prevents a second call from clearing in-flight pendingRuns.
+        if (_sessionKey.value == key && bootstrapJob?.isActive == true) return@withLock
+
+        // Cancel any existing bootstrap job and wait for it to complete
+        bootstrapJob?.cancel()
+        bootstrapJob?.join()
+
+        _sessionKey.value = key
+        bootstrapJob = launch { bootstrap(forceHealth = true) }
+      }
+    }
   }
 
   fun applyMainSessionKey(mainSessionKey: String) {
     val trimmed = mainSessionKey.trim()
     if (trimmed.isEmpty()) return
-    if (_sessionKey.value == trimmed) return
-    if (_sessionKey.value != "main") return
-    _sessionKey.value = trimmed
-    bootstrapJob?.cancel()
-    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
+
+    scope.launch {
+      bootstrapMutex.withLock {
+        if (_sessionKey.value == trimmed) return@withLock
+        if (_sessionKey.value != "main") return@withLock
+
+        // Cancel any existing bootstrap job and wait for it to complete
+        bootstrapJob?.cancel()
+        bootstrapJob?.join()
+
+        _sessionKey.value = trimmed
+        bootstrapJob = launch { bootstrap(forceHealth = true) }
+      }
+    }
   }
 
   fun refresh() {
-    bootstrapJob?.cancel()
-    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
+    scope.launch {
+      bootstrapMutex.withLock {
+        // Cancel any existing bootstrap job and wait for it to complete
+        bootstrapJob?.cancel()
+        bootstrapJob?.join()
+
+        bootstrapJob = launch { bootstrap(forceHealth = true) }
+      }
+    }
   }
 
   fun refreshSessions(limit: Int? = null) {
@@ -113,9 +140,20 @@ class ChatController(
     val key = sessionKey.trim()
     if (key.isEmpty()) return
     if (key == _sessionKey.value) return
-    _sessionKey.value = key
-    bootstrapJob?.cancel()
-    bootstrapJob = scope.launch { bootstrap(forceHealth = true) }
+
+    scope.launch {
+      bootstrapMutex.withLock {
+        // Re-check inside lock in case session changed while waiting
+        if (key == _sessionKey.value) return@withLock
+
+        // Cancel any existing bootstrap job and wait for it to complete
+        bootstrapJob?.cancel()
+        bootstrapJob?.join()
+
+        _sessionKey.value = key
+        bootstrapJob = launch { bootstrap(forceHealth = true) }
+      }
+    }
   }
 
   fun sendMessage(
