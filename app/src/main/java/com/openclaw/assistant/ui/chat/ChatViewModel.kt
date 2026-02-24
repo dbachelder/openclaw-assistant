@@ -24,6 +24,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.resume
+import com.openclaw.assistant.ui.chat.ConnectionStatus
 
 private const val TAG = "ChatViewModel"
 
@@ -49,7 +50,11 @@ data class ChatUiState(
     val pendingToolCalls: List<String> = emptyList(),
     val isNodeChatMode: Boolean = false,
     val pendingGatewayTrust: com.openclaw.assistant.node.NodeRuntime.GatewayTrustPrompt? = null,
-    val displayName: String = ""
+    val displayName: String = "",
+    // Loading states
+    val isLoadingHistory: Boolean = false,
+    val connectionStatus: ConnectionStatus = ConnectionStatus.CONNECTING,
+    val hasLoadedHistory: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -114,7 +119,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     
     // We combine local/remote message streams into uiState
     init {
-        _uiState.update { it.copy(isNodeChatMode = useNodeChat) }
+        _uiState.update {
+            it.copy(
+                isNodeChatMode = useNodeChat,
+                isLoadingHistory = true
+            )
+        }
         if (useNodeChat) {
             // Remote sessions/messages via NodeRuntime
             viewModelScope.launch {
@@ -139,7 +149,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 nodeRuntime.chatMessages.collect { messages ->
                     val uiMessages = messages.map { it.toUiChatMessage() }
                     _uiState.update { state ->
-                        state.copy(messages = uiMessages)
+                        state.copy(
+                            messages = uiMessages,
+                            isLoadingHistory = false,
+                            hasLoadedHistory = true
+                        )
                     }
                     // Trigger TTS when a new assistant message arrives after user sent a message
                     if (uiMessages.size > previousCount && pendingNodeChatTts) {
@@ -224,7 +238,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             viewModelScope.launch {
                 _messagesFlow.collect { messages ->
-                    _uiState.update { it.copy(messages = messages) }
+                    _uiState.update {
+                        it.copy(
+                            messages = messages,
+                            isLoadingHistory = false,
+                            hasLoadedHistory = true
+                        )
+                    }
                 }
             }
             // Initial session setup (skip if already set via Intent)
@@ -243,14 +263,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Shared observation
         viewModelScope.launch {
             if (useNodeChat) {
-                // Skip the initial disconnected state to avoid showing error on startup
-                nodeRuntime.isConnected.drop(1).collect { connected ->
-                    if (!connected) {
-                        _uiState.update { it.copy(error = "Node gateway offline") }
-                    } else {
-                        _uiState.update { it.copy(error = null) }
+                // Track previous connection state for detecting reconnections
+                var wasConnected = false
+                nodeRuntime.isConnected.collect { connected ->
+                    val status = when {
+                        connected -> {
+                            val status = if (!wasConnected && _uiState.value.connectionStatus != ConnectionStatus.CONNECTING) {
+                                ConnectionStatus.CONNECTED
+                            } else {
+                                ConnectionStatus.CONNECTED
+                            }
+                            wasConnected = true
+                            status
+                        }
+                        wasConnected -> {
+                            wasConnected = false
+                            ConnectionStatus.RECONNECTING
+                        }
+                        else -> ConnectionStatus.DISCONNECTED
+                    }
+                    _uiState.update {
+                        it.copy(
+                            connectionStatus = status,
+                            error = if (!connected && it.error == null) "Node gateway offline" else if (connected) null else it.error
+                        )
                     }
                 }
+            } else {
+                // HTTP mode - always show as connected since it's request/response
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTED) }
             }
         }
 
@@ -864,5 +905,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             isUser = isUserMessage,
             timestamp = timestampMs ?: System.currentTimeMillis()
         )
+    }
+
+    /**
+     * Retry loading chat history after an error
+     */
+    fun retryLoadHistory() {
+        _uiState.update { it.copy(error = null, isLoadingHistory = true) }
+        viewModelScope.launch {
+            try {
+                if (useNodeChat) {
+                    nodeRuntime.refreshChat()
+                } else {
+                    // For local DB mode, refresh the current session messages
+                    _currentSessionId.value?.let { sessionId ->
+                        // Messages flow will update automatically via _messagesFlow
+                        _uiState.update { it.copy(hasLoadedHistory = true) }
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Failed to load messages") }
+            } finally {
+                _uiState.update { it.copy(isLoadingHistory = false) }
+            }
+        }
+    }
+
+    /**
+     * Clear the current error state
+     */
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
     }
 }

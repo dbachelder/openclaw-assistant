@@ -371,4 +371,15 @@
     <string name="update_available">New version (%s) available</string>
     <string name="up_to_date">App is up to date</string>
     <string name="update_action">Update</string>
+
+    <!-- Chat Loading States -->
+    <string name="empty_chat_title">Start a conversation</string>
+    <string name="empty_chat_subtitle">Ask OpenClaw anything to get started</string>
+    <string name="start_conversation">Start conversation</string>
+    <string name="error_loading_messages">Failed to load messages</string>
+    <string name="retry_button">Retry</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_reconnecting">Reconnecting…</string>
 </resources>

@@ -60,6 +60,12 @@ import com.openclaw.assistant.ui.components.MarkdownText
 import com.openclaw.assistant.ui.components.PairingRequiredCard
 import com.openclaw.assistant.ui.chat.ChatUiState
 import com.openclaw.assistant.ui.chat.ChatViewModel
+import com.openclaw.assistant.ui.chat.ConnectionStatus
+import com.openclaw.assistant.ui.chat.ConnectionStatusIndicator
+import com.openclaw.assistant.ui.chat.EmptyMessagesState
+import com.openclaw.assistant.ui.chat.ErrorWithRetryState
+import com.openclaw.assistant.ui.chat.LoadingMessagesShimmer
+import com.openclaw.assistant.ui.chat.TypingAnimationIndicator
 import com.openclaw.assistant.gateway.AgentInfo
 import com.openclaw.assistant.ui.theme.OpenClawAssistantTheme
 import androidx.compose.material3.TextButton
@@ -148,7 +154,8 @@ class ChatActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onBack = { finish() },
                     onAgentSelected = { viewModel.setAgent(it) },
                     onAcceptGatewayTrust = { viewModel.acceptGatewayTrust() },
-                    onDeclineGatewayTrust = { viewModel.declineGatewayTrust() }
+                    onDeclineGatewayTrust = { viewModel.declineGatewayTrust() },
+                    onRetryLoadHistory = { viewModel.retryLoadHistory() }
                 )
             }
         }
@@ -266,7 +273,8 @@ fun ChatScreen(
     onBack: () -> Unit,
     onAgentSelected: (String?) -> Unit = {},
     onAcceptGatewayTrust: () -> Unit = {},
-    onDeclineGatewayTrust: () -> Unit = {}
+    onDeclineGatewayTrust: () -> Unit = {},
+    onRetryLoadHistory: () -> Unit = {}
 ) {
     var inputText by rememberSaveable { mutableStateOf(initialText) }
     val listState = rememberLazyListState()
@@ -304,11 +312,14 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(uiState.error) {
+        // Only show snackbar if there are messages (not showing full-screen error)
         uiState.error?.let { error ->
-            snackbarHostState.showSnackbar(
-                message = error,
-                duration = SnackbarDuration.Short
-            )
+            if (uiState.messages.isNotEmpty()) {
+                snackbarHostState.showSnackbar(
+                    message = error,
+                    duration = SnackbarDuration.Short
+                )
+            }
         }
     }
 
@@ -389,6 +400,11 @@ fun ChatScreen(
             }
         ) { paddingValues ->
             Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                // Connection status indicator
+                if (uiState.isNodeChatMode && uiState.connectionStatus != ConnectionStatus.CONNECTED) {
+                    ConnectionStatusIndicator(status = uiState.connectionStatus)
+                }
+
                 // Gateway TLS Trust prompt
                 if (uiState.pendingGatewayTrust != null) {
                     GatewayTrustDialog(
@@ -406,29 +422,58 @@ fun ChatScreen(
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
-                    LazyColumn(
-                        state = listState,
-                        reverseLayout = true,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
-                    ) {
-                        if (uiState.pendingToolCalls.isNotEmpty()) {
-                            item { PendingToolsIndicator(uiState.pendingToolCalls) }
+                    when {
+                        // Show loading shimmer when loading history
+                        uiState.isLoadingHistory -> {
+                            LoadingMessagesShimmer(
+                                count = 3,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp, vertical = 16.dp)
+                            )
                         }
-                        if (uiState.isSpeaking) {
-                            item { SpeakingIndicator(onStop = onStopSpeaking) }
+                        // Show error with retry when there's an error and no messages
+                        uiState.error != null && uiState.messages.isEmpty() -> {
+                            ErrorWithRetryState(
+                                message = uiState.error,
+                                onRetry = onRetryLoadHistory,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
-                        if (uiState.isThinking) {
-                            item { ThinkingIndicator() }
+                        // Show empty state when no messages and not loading
+                        uiState.messages.isEmpty() -> {
+                            EmptyMessagesState(
+                                onStartChat = null,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
+                        // Show message list
+                        else -> {
+                            LazyColumn(
+                                state = listState,
+                                reverseLayout = true,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)
+                            ) {
+                                if (uiState.pendingToolCalls.isNotEmpty()) {
+                                    item { PendingToolsIndicator(uiState.pendingToolCalls) }
+                                }
+                                if (uiState.isSpeaking) {
+                                    item { SpeakingIndicator(onStop = onStopSpeaking) }
+                                }
+                                if (uiState.isThinking) {
+                                    item { TypingAnimationIndicator() }
+                                }
 
-                        items(groupedItems) { item ->
-                            when (item) {
-                                is ChatListItem.DateSeparator -> DateHeader(item.dateText)
-                                is ChatListItem.MessageItem -> MessageBubble(message = item.message)
+                                items(groupedItems) { item ->
+                                    when (item) {
+                                        is ChatListItem.DateSeparator -> DateHeader(item.dateText)
+                                        is ChatListItem.MessageItem -> MessageBubble(message = item.message)
+                                    }
+                                }
                             }
                         }
                     }
