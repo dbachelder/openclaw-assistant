@@ -71,6 +71,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // WakeLock to keep CPU alive during voice interaction with screen off
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wakeLockAcquireTime: Long = 0
+    private var wakeLockWatchdogJob: Job? = null
+
+    private enum class WakeLockState {
+        RELEASED,
+        ACQUIRED,
+        RELEASED_BY_WATCHDOG
+    }
+    private val _wakeLockState = MutableStateFlow(WakeLockState.RELEASED)
+    val wakeLockState: StateFlow<WakeLockState> = _wakeLockState.asStateFlow()
+
+    companion object {
+        private const val WAKE_LOCK_MAX_TIMEOUT_MS = 2 * 60 * 1000L // 2 minutes max
+        private const val WAKE_LOCK_WATCHDOG_TIMEOUT_MS = 60 * 1000L // 60 second watchdog
+    }
     
     // Session Management
     private val _allSessions = MutableStateFlow<List<com.openclaw.assistant.data.local.entity.SessionEntity>>(emptyList())
@@ -626,14 +641,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         speakingJob = viewModelScope.launch {
             _uiState.update { it.copy(isSpeaking = true) }
 
+            var success = false
             try {
-                val success = if (isTTSReady && tts != null) {
+                success = if (isTTSReady && tts != null) {
                     speakWithTTS(cleanText)
                 } else {
                     Log.e(TAG, "TTS not ready, skipping speech")
                     false
                 }
-
+            } catch (e: Exception) {
+                Log.e(TAG, "TTS speak error", e)
+                tts?.stop()
+            } finally {
                 _uiState.update { it.copy(isSpeaking = false) }
 
                 // If it was a voice conversation and continuous mode is on, continue listening
@@ -642,19 +661,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     speechManager.destroy()
                     kotlinx.coroutines.delay(1000)
 
-                    // Restart listening
+                    // Restart listening (will re-acquire wake lock)
                     startListening()
                 } else {
-                    // Conversation ended
+                    // Conversation ended - always release wake lock
                     releaseWakeLock()
                     sendResumeBroadcast()
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "TTS speak error", e)
-                _uiState.update { it.copy(isSpeaking = false) }
-                tts?.stop()
-                releaseWakeLock()
-                sendResumeBroadcast()
             }
         }
     }
@@ -794,26 +807,58 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // REMOVED private fun addMessage because we now flow from DB
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+        if (wakeLock?.isHeld == true) {
+            Log.d(TAG, "WakeLock already held, skipping acquire")
+            return
+        }
+
         val app = getApplication<Application>()
         val powerManager = app.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = powerManager.newWakeLock(
             android.os.PowerManager.PARTIAL_WAKE_LOCK,
             "OpenClawAssistant::ChatWakeLock"
         ).apply {
-            acquire(5 * 60 * 1000L) // 5 min max to prevent leak
+            acquire(WAKE_LOCK_MAX_TIMEOUT_MS)
         }
-        Log.d(TAG, "WakeLock acquired")
+        wakeLockAcquireTime = System.currentTimeMillis()
+        _wakeLockState.value = WakeLockState.ACQUIRED
+        Log.d(TAG, "WakeLock acquired at ${wakeLockAcquireTime}, maxTimeout=${WAKE_LOCK_MAX_TIMEOUT_MS}ms")
+
+        // Start watchdog for early release to save battery
+        startWakeLockWatchdog()
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-                Log.d(TAG, "WakeLock released")
+        wakeLockWatchdogJob?.cancel()
+        wakeLockWatchdogJob = null
+
+        wakeLock?.let { lock ->
+            if (lock.isHeld) {
+                val heldDuration = System.currentTimeMillis() - wakeLockAcquireTime
+                lock.release()
+                _wakeLockState.value = WakeLockState.RELEASED
+                Log.d(TAG, "WakeLock released after ${heldDuration}ms")
+            } else {
+                Log.w(TAG, "WakeLock release called but not held")
             }
         }
         wakeLock = null
+        wakeLockAcquireTime = 0
+    }
+
+    private fun startWakeLockWatchdog() {
+        wakeLockWatchdogJob?.cancel()
+        wakeLockWatchdogJob = viewModelScope.launch {
+            delay(WAKE_LOCK_WATCHDOG_TIMEOUT_MS)
+            if (wakeLock?.isHeld == true) {
+                val heldDuration = System.currentTimeMillis() - wakeLockAcquireTime
+                Log.w(TAG, "WakeLock watchdog triggered after ${heldDuration}ms, forcing release")
+                wakeLock?.release()
+                _wakeLockState.value = WakeLockState.RELEASED_BY_WATCHDOG
+                wakeLock = null
+                wakeLockAcquireTime = 0
+            }
+        }
     }
 
     private fun startThinkingSound() {
@@ -838,6 +883,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         stopThinkingSound()
         speechManager.destroy()
         toneGenerator.release()
+        // Cancel watchdog and force release wake lock on ViewModel destruction
+        wakeLockWatchdogJob?.cancel()
+        wakeLockWatchdogJob = null
         releaseWakeLock()
         sendResumeBroadcast()
         // Don't shutdown TTS here - Activity owns it
